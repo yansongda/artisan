@@ -3,11 +3,11 @@
 > **时间**：2026-08-29
 > **作者**：GLM-5.3-Flash + yansongda
 > **状态**：已定稿（2026-08-29）
-> **决策记录**：不考虑向后兼容；`HttpOptions` 拆分为 `ClientOptions`/`RequestOptions`（选项 A，无废弃别名，类型放 rocket.rs；**`RequestOptions` 仅含 `timeout`**——reqwest 0.13.3 的 `RequestBuilder` 无 `connect_timeout` 方法，`connect_timeout` 收敛为 client 级专属）；`Artful` 直接改为实例类型、删除静态版本；错误消息英文化、删 `cease()`、`InvalidUrl` 改名全部纳入；单 PR 交付。
+> **决策记录**：不考虑向后兼容；`HttpOptions` 拆分为 `ClientOptions`/`RequestOptions`（选项 A，无废弃别名，类型放 rocket.rs；**`RequestOptions` 仅含 `timeout`**——reqwest 0.13.3 的 `RequestBuilder` 无 `connect_timeout` 方法，`connect_timeout` 收敛为 client 级专属）；`Artful` 直接改为实例类型、删除静态版本；错误消息英文化、删 `cease()`、`InvalidUrl` 改名全部纳入；单 PR 交付。评审后增补：新增 `Artful::with_builder`（`config.http` 基座 + 回调叠加，后写 setter 覆盖先写值）与 `Artful::with_client`（注入外部构建 client，`config.http` 不作用于它、仅作配置记录）；`http` 模块私有化（`build_builder`/`build_client`/`default_client` 均不对外），client 定制构建统一经 `with_builder`。
 
 ## 1. 背景与问题
 
-**现状**：artisan-http 0.13.1 是基于洋葱模型的 HTTP 客户端框架（artful PHP 框架的 Rust 移植），`Artful` 为纯静态类 + `OnceLock` 全局配置 + 全局 reqwest 单例 client，59 个测试全绿，clippy/fmt 干净。
+**现状**：artisan-http 0.13.1 是基于洋葱模型的 HTTP 客户端框架（artful PHP 框架的 Rust 移植），`Artful` 为纯静态类 + `OnceLock` 全局配置 + 全局 reqwest 单例 client，测试全绿，clippy/fmt 干净。
 
 **困境**：
 
@@ -108,7 +108,7 @@ pub struct RequestOptions {
 
 - `Config.http: ClientOptions`（`config.rs`）；`RocketConfig.http: RequestOptions`；`HttpOptions` 直接删除（无废弃别名）。
 - 字段名沿用（请求级仅保留 `timeout`；`connect_timeout` 为 client 级专属）。per-request 误设 pool 字段 → 编译错误（设计意图）。
-- `build_client` 消费全部五个字段（`ClientBuilder::timeout` / `ClientBuilder::connect_timeout` 接线，reqwest 0.13.3 均提供）；请求级 `RequestBuilder::timeout` 自动覆盖 client 级 timeout，两层天然协作。
+- `build_builder` 消费全部五个字段配置 `ClientBuilder`（不构建），`build_client` 为其薄封装（`ClientBuilder::timeout` / `ClientBuilder::connect_timeout` 接线，reqwest 0.13.3 均提供）；请求级 `RequestBuilder::timeout` 自动覆盖 client 级 timeout，两层天然协作。
 - 注意：`ClientOptions` 含 `String` 字段不再 `Copy`，`get_config().http` 按值传递处改为 `.clone()`。
 
 ### 3.2 Artful 实例化（artful.rs 整体重写）
@@ -120,6 +120,12 @@ pub struct Artful { config: Config, client: reqwest::Client }
 impl Artful {
     pub fn new() -> Result<Self>;                          // 默认配置
     pub fn with_config(config: Config) -> Result<Self>;    // 构造即构建 client，失败 ClientBuildError
+    pub fn with_builder(
+        config: Config,
+        customize: impl FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
+    ) -> Result<Self>;                                     // config.http 基座 + 回调叠加，后写 setter 覆盖先写值
+    pub fn with_client(config: Config, client: reqwest::Client) -> Self;
+                                                           // 注入外部 client，config.http 不作用于它（仅作配置记录）
     pub fn config(&self) -> &Config;
     pub fn client(&self) -> &reqwest::Client;
     pub async fn artful(&self, params, plugins) -> Result<Destination>;
@@ -164,7 +170,7 @@ fn content_type(&self) -> Option<&'static str> { Some("application/json") }
 | 文件 | 改动 |
 |------|------|
 | `tests/artful_test.rs` | `Artful::artful` 9 处（artful_test.rs L49/175/254/286/332/353/370 + integration_test.rs L48/79）→ `Artful::new().unwrap()` 实例调用；`get_config/has_config` 2 用例（L77-90）重写为实例 `config()` 断言；`raw` 2 用例（L93-130）改实例 client |
-| `tests/flow_ctrl_test.rs` | 5 处真实 `cease()` 调用点所在用例改 `skip_rest` 并全部保留（L135/150/217/245/277，维持 65 计数；`test_flow_ctrl_cease` L46 未实际调用 `cease()`，不动） |
+| `tests/flow_ctrl_test.rs` | 5 处真实 `cease()` 调用点所在用例改 `skip_rest` 并全部保留（`test_flow_ctrl_cease` L46 未实际调用 `cease()`，不动） |
 | `tests/rocket_test.rs` | `HttpOptions` → `RequestOptions`/`ClientOptions` 类型名替换（实际位置 L1/30/37/185）；`test_rocket_merge_payload`（L56-64）改写为 `merge_params_to_payload` 断言 |
 | `tests/integration_test.rs` | L48/L79 两处实例化替换 |
 | `tests/packer_test.rs`、`direction_test.rs`、`shortcut_test.rs` | 核对是否受 trait 方法新增影响（`content_type` 带默认实现，预期零改动） |
@@ -181,14 +187,14 @@ fn content_type(&self) -> Option<&'static str> { Some("application/json") }
 | `merge_params_to_payload` | params → payload 合且 params 不变 |
 | `fallback_branch_sets_content_type` | 无 `AddPayloadBodyPlugin` 的链（StartPlugin + URL 插件 + AddRadarPlugin + ParserPlugin）：payload 非空且 body 为 None，走 AddRadarPlugin fallback 打包分支补 CT，matcher 断言 `application/json`（覆盖 §3.3 第二补头点，补头落点为 request_builder） |
 
-用例归属固定，不新建测试文件（维持 tests ×7）：CT 四例与 `client_timeout_takes_effect` 入 `integration_test.rs`；`artful_new_and_accessors` 入 `artful_test.rs`；`merge_params_to_payload` 入 `rocket_test.rs`（替代原 `test_rocket_merge_payload`）。
+用例归属固定，不新建测试文件：CT 四例与 `client_timeout_takes_effect` 入 `integration_test.rs`；`artful_new_and_accessors` 入 `artful_test.rs`；`merge_params_to_payload` 入 `rocket_test.rs`（替代原 `test_rocket_merge_payload`）。
 
 ### 3.6 文档与元数据同步
 
 - **Cargo.toml**：`readme = "README.md"`、`keywords = ["http", "client", "middleware", "plugin"]`、`categories = ["network-programming", "web-programming::http-client"]`、版本 0.14.0。
-- **README ×2**：快速开始改实例 API；新增「全局单例（LazyLock）」小节（含零 panic 变体）；Content-Type 自动补头说明；版本引用 `~0.13.1` → `~0.14.0`（根 README 3 处、artisan-http README 1 处）；测试计数 59 → 65（两份 README 各 1 处）；修复 artisan-http README L234 架构文档断链（`../docs/ARCHITECTURE.md` → `docs/ARCHITECTURE.md`，实际文件在 `artisan-http/docs/`）。
+- **README ×2**：快速开始改实例 API；新增「全局单例（LazyLock）」小节（含零 panic 变体）；Content-Type 自动补头说明；版本引用 `~0.13.1` → `~0.14.0`（根 README 3 处、artisan-http README 1 处）；测试数量不在文档中体现（评审后决策：README/AGENTS 不写死测试计数）；修复 artisan-http README L234 架构文档断链（`../docs/ARCHITECTURE.md` → `docs/ARCHITECTURE.md`，实际文件在 `artisan-http/docs/`）。
 - **AGENTS.md（根）**：References 中 `docs/ARCHITECTURE.md` → `artisan-http/docs/ARCHITECTURE.md`；feature 用法示例同步。
-- **artisan-http/AGENTS.md**：`src/artisan.rs` → `src/artful.rs`；Shortcut 描述去掉 `Default` bound；测试数量更新；按新 API 重写 Key Types/Patterns。
+- **artisan-http/AGENTS.md**：`src/artisan.rs` → `src/artful.rs`；Shortcut 描述去掉 `Default` bound；测试章节去计数化；按新 API 重写 Key Types/Patterns。
 - **artisan-http/docs/ARCHITECTURE.md**（969 行，成段重写）：§2.2 类型拆分、§2.3 Config 实例化（含 LazyLock）、§2.5 删 cease、§3.1 Artful 主入口、§3.2 HTTP 客户端（build_client/default_client + 全字段接线）、§4 插件（merge_params_to_payload/CT/RequestBuildError/rocket.client）、§5 使用示例全量实例化、§6 模块结构（artful.rs/artful_test.rs/删 LoggerConfig）、§7 依赖清单对齐真实 Cargo.toml（reqwest 0.13、无 tracing）、§8 补记 0.14.0。
 - **CHANGELOG ×2**：0.14.0 条目，破坏性变更逐项列出。
 - **CI**：coding-linter.yml check job `cargo check --all-features` → `cargo check --workspace --all-features`。

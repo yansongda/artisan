@@ -8,7 +8,7 @@ artisan/
 ├── src/lib.rs              # Facade（Feature 控制的 re-export）
 └── artisan-http/           # HTTP 实现
     ├── src/                # 核心实现
-    ├── tests/              # 测试（68 个）
+    ├── tests/              # 测试
     ├── examples/           # 示例
     └── docs/               # 架构文档
 ```

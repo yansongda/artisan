@@ -508,6 +508,14 @@ impl Artful {
 - `reqwest::Client` 内部 `Arc`，实例 `Clone` 廉价且共享连接池
 - 客户端级选项（`ClientOptions`）在构造时全部接线，配置错误编译期/构造期暴露
 
+**构造入口与 client 控制权**（按控制权从低到高）：
+
+| 入口 | 构建方式 | `config.http` 是否生效 |
+|------|----------|------------------------|
+| `Artful::new()` / `Artful::with_config(config)` | 框架全托管：`build_builder` 按 `config.http` 应用全部选项后构建（`with_config` 即 `with_builder(config, \|b\| b)`） | ✅ |
+| `Artful::with_builder(config, customize)` | 先按 `config.http` 应用框架默认值，再由回调叠加 `ClientOptions` 无法表达的能力（代理、TLS 证书、cookie 会话、重定向策略等）后构建；回调内后写的 setter 覆盖先写值 | ✅（回调可覆盖） |
+| `Artful::with_client(config, client)` | 完全接管：注入外部构建的 client（跨实例共享连接池时使用） | ❌（仅作配置记录） |
+
 ```rust
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -516,17 +524,12 @@ const DEFAULT_POOL_IDLE_TIMEOUT: u64 = 90;
 const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 20;
 const DEFAULT_USER_AGENT: &str = concat!("yansongda/artisan-http:", env!("CARGO_PKG_VERSION"));
 
-/// 框架默认客户端（供直接构造 Rocket 使用，惰性初始化一次）
-pub(crate) fn default_client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-
-    CLIENT.get_or_init(|| {
-        build_client(ClientOptions::default()).unwrap_or_else(|_| fallback_client())
-    })
-}
-
-/// 按 ClientOptions 构建 HTTP 客户端（消费全部字段）
-pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, reqwest::Error> {
+/// 按 ClientOptions 配置 ClientBuilder（消费全部字段，不构建）
+///
+/// 框架默认值兜底：pool_idle_timeout=90s、pool_max_idle_per_host=20、
+/// UA=yansongda/artisan-http:{version}；未设置的 timeout/connect_timeout
+/// 保持 reqwest 默认（无超时）。
+pub(crate) fn build_builder(options: ClientOptions) -> reqwest::ClientBuilder {
     let pool_idle_timeout = options.pool_idle_timeout.unwrap_or(DEFAULT_POOL_IDLE_TIMEOUT);
     let pool_max_idle_per_host = options
         .pool_max_idle_per_host
@@ -548,7 +551,21 @@ pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, re
         builder = builder.connect_timeout(Duration::from_secs(secs));
     }
 
-    builder.build()
+    builder
+}
+
+/// 按 ClientOptions 构建 HTTP 客户端（消费全部字段）
+pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, reqwest::Error> {
+    build_builder(options).build()
+}
+
+/// 框架默认客户端（供直接构造 Rocket 使用，惰性初始化一次）
+pub(crate) fn default_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+    CLIENT.get_or_init(|| {
+        build_client(ClientOptions::default()).unwrap_or_else(|_| fallback_client())
+    })
 }
 
 fn fallback_client() -> reqwest::Client {
@@ -962,7 +979,7 @@ artisan-http/
 │   │   ├── mod.rs              # 导出所有内置 Packer
 │   │   └── json.rs             # JsonPacker
 │   │
-│   └── http.rs                 # build_client / default_client（pub(crate)）
+│   └── http.rs                 # build_builder / build_client / default_client（模块私有）
 │
 ├── examples/
 │   ├── basic.rs                # 基础使用示例
@@ -1000,7 +1017,7 @@ artisan-http/
 | `src/directions/` | 内置解析器 | `Json` |
 | `src/packer.rs` | 序列化 trait | `Packer` trait |
 | `src/packers/` | 内置序列化器 | `JsonPacker` |
-| `src/http.rs` | HTTP 客户端构建 | `build_client` / `default_client`（pub(crate)） |
+| `src/http.rs` | HTTP 客户端构建（模块私有） | `build_builder` / `build_client` / `default_client` |
 | `src/error.rs` | 错误 | `ArtfulError` enum |
 
 ---
@@ -1035,7 +1052,7 @@ wiremock = { version = "~0.6.5" }
 - [x] Direction 解析策略（Json, Response 等）
 - [x] Artful 主入口（artisan, shortcut, raw 方法）
 - [x] Shortcut trait
-- [x] 基础测试覆盖（18 tests）
+- [x] 基础测试覆盖
 - [x] README 文档
 
 ### v0.14.0 - 实例化与配置治理（2026-08-29）
@@ -1062,7 +1079,7 @@ wiremock = { version = "~0.6.5" }
 
 ---
 
-## 十、参考资源
+## 九、参考资源
 
 - [yansongda/artisan](https://github.com/yansongda/artisan) - PHP 版本框架
 - [salvo-rs/salvo](https://github.com/salvo-rs/salvo) - Rust Web 框架（洋葱模型参考）

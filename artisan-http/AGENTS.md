@@ -14,7 +14,7 @@
 # Build & check
 cargo check -p artisan-http --all-features
 
-# Test (68 tests)
+# Test
 cargo test -p artisan-http --all-features
 
 # Format & lint
@@ -107,7 +107,7 @@ pub trait Shortcut {  // no Default bound required
 
 ## Testing
 
-- 68 tests across 7 files
+- Tests across 7 files
 - Use `wiremock` for HTTP mocking in integration tests
 - `#[tokio::test]` for async tests
 - Tests in `tests/` directory, not inline

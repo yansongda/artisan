@@ -276,7 +276,7 @@ cargo run -p artisan-http --example direction
 ## 测试
 
 ```bash
-# 运行所有测试（68 个）
+# 运行所有测试
 cargo test -p artisan-http --all-features
 ```
 
