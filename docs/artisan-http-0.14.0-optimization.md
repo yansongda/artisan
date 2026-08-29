@@ -2,14 +2,14 @@
 
 > **时间**：2026-08-29
 > **作者**：GLM-5.3-Flash + yansongda
-> **状态**：经过人工审核确认（2026-08-29，对话内逐项确认）；2026-08-29 按 plan-reviewer 初审意见修订（B1：`RequestOptions` 去掉 `connect_timeout`；M1-M3：补 config.rs / merge_payload 测试迁移 / README 版本号）；2026-08-29 按执行前终审意见修订（补第 7 用例 `fallback_branch_sets_content_type`，测试计数修正为 59−1+7=65；修正 §2 add_radar 表项 connect_timeout 残留、§5 文件数、ARCHITECTURE 行数）；2026-08-29 按落盘后独立审查修订（facade 路径更正为仓库根 `src/lib.rs`；src 与测试合并为同一推进步、同一 commit 以符合仓库 AGENTS.md 三件套强制规则；7 个新用例固定落入既有 7 个测试文件）；2026-08-29 按独立审查意见修订（M1：§3.3 AddRadarPlugin fallback 补头落点明确为 request_builder；M2：附录 B 零 panic 变体调用点改为可编译写法；m1-m5：README L234 断链纳入修复、新用例前置条件注明、补头片段位置注明、§5 计数与措辞勘误）
-> **决策记录**：不考虑向后兼容；`HttpOptions` 拆分为 `ClientOptions`/`RequestOptions`（选项 A，无废弃别名，类型放 rocket.rs；**`RequestOptions` 仅含 `timeout`**——reqwest 0.13.3 的 `RequestBuilder` 无 `connect_timeout` 方法，已验证本地 vendored 源码，`connect_timeout` 收敛为 client 级专属）；`Artful` 直接改为实例类型、删除静态版本；错误消息英文化、删 `cease()`、`InvalidUrl` 改名全部纳入；单 PR 交付。
+> **状态**：已定稿（2026-08-29）
+> **决策记录**：不考虑向后兼容；`HttpOptions` 拆分为 `ClientOptions`/`RequestOptions`（选项 A，无废弃别名，类型放 rocket.rs；**`RequestOptions` 仅含 `timeout`**——reqwest 0.13.3 的 `RequestBuilder` 无 `connect_timeout` 方法，`connect_timeout` 收敛为 client 级专属）；`Artful` 直接改为实例类型、删除静态版本；错误消息英文化、删 `cease()`、`InvalidUrl` 改名全部纳入；单 PR 交付。
 
 ## 1. 背景与问题
 
 **现状**：artisan-http 0.13.1 是基于洋葱模型的 HTTP 客户端框架（artful PHP 框架的 Rust 移植），`Artful` 为纯静态类 + `OnceLock` 全局配置 + 全局 reqwest 单例 client，59 个测试全绿，clippy/fmt 干净。
 
-**困境**（全部基于源码通读验证，非推断）：
+**困境**：
 
 1. **Content-Type 缺失**（bug 级）：默认插件链（StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin）发出的 JSON body 不带 `Content-Type` 头。`AddRadarPlugin` 使用 `request_builder.body()`（`artisan-http/src/plugins/add_radar.rs:39-40`），reqwest 仅 `.json()` 才自动设置 Content-Type。对接严格校验头的服务端会失败；测试未暴露是因为无人断言该头。
 2. **`connect_timeout` 死字段**：`HttpOptions::connect_timeout`（`rocket.rs:60`）定义并被模块文档与 `examples/config.rs` 演示，但全库无任何代码消费。
@@ -108,7 +108,7 @@ pub struct RequestOptions {
 
 - `Config.http: ClientOptions`（`config.rs`）；`RocketConfig.http: RequestOptions`；`HttpOptions` 直接删除（无废弃别名）。
 - 字段名沿用（请求级仅保留 `timeout`；`connect_timeout` 为 client 级专属）。per-request 误设 pool 字段 → 编译错误（设计意图）。
-- `build_client` 消费全部五个字段（`ClientBuilder::timeout` / `ClientBuilder::connect_timeout` 接线，均已验证存在于 reqwest 0.13.3）；请求级 `RequestBuilder::timeout` 自动覆盖 client 级 timeout，两层天然协作。
+- `build_client` 消费全部五个字段（`ClientBuilder::timeout` / `ClientBuilder::connect_timeout` 接线，reqwest 0.13.3 均提供）；请求级 `RequestBuilder::timeout` 自动覆盖 client 级 timeout，两层天然协作。
 - 注意：`ClientOptions` 含 `String` 字段不再 `Copy`，`get_config().http` 按值传递处改为 `.clone()`。
 
 ### 3.2 Artful 实例化（artful.rs 整体重写）
@@ -218,11 +218,7 @@ fn content_type(&self) -> Option<&'static str> { Some("application/json") }
 | client 级 connect_timeout 网络行为在 CI 难稳定断言 | 低 | 以消除死字段 + 类型编译期暴露为准，不做脆弱的网络断言；请求级不提供该选项（reqwest 0.13.3 `RequestBuilder` 无此方法） |
 | `ClientOptions` 失去 `Copy` 引发内部传递处编译错 | 低 | 仅 `Artful::with_config`（artful.rs）一处按值传递（`build_client(config.http.clone())`）；clippy 兜底 |
 
-## 附录 A：契约验证声明
-
-本方案全部契约标注为「已验证（读过源码）」，无「推断（未实测）」项。验证方式：通读 `artisan-http/src/` 全部 13 个源文件（含 config.rs）、7 个测试文件、5 个示例、2 个 Cargo.toml、2 组 workflow、README/AGENTS ×2、ARCHITECTURE.md，并运行 `cargo clippy`/`cargo test`（0.13.1 基线 59 个测试 + 5 个 doctest 全绿）、grep 确认 `connect_timeout`/`Content-Type`/`get_client`/`Artful::` 全部调用点。reqwest 0.13.3 API 已对照本地 vendored 源码（`~/.cargo/registry/.../reqwest-0.13.3`）验证：`RequestBuilder` 有 `timeout`、无 `connect_timeout`（后者仅 `ClientBuilder` 提供）；`.body()` 不设置 Content-Type；实现期如遇偏差按 Executor rules 分级处理。
-
-## 附录 B：应用层 LazyLock 用法
+## 附录：应用层 LazyLock 用法
 
 ```rust
 use std::sync::LazyLock;
