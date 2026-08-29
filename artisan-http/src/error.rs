@@ -2,7 +2,7 @@
 //!
 //! 定义框架中所有可能出现的错误类型，包括：
 //! - HTTP 请求错误（RequestFailed）
-//! - HTTP 客户端/请求构建错误（ClientBuild, `RequestBuildError`）
+//! - HTTP 客户端/请求构建错误（ClientBuildError, `RequestBuildError`）
 //! - 序列化错误（JsonSerializeError, `JsonDeserializeError`)
 //! - 插件错误（PluginExecutionError）
 //! - 参数错误（MissingParameter, `InvalidParameter`)
@@ -21,7 +21,7 @@ pub enum ArtfulError {
     /// 注意：`reqwest::Error` 的 `#[from]` 已被 [`ArtfulError::RequestFailed`]
     /// 占用，此处须使用显式 `#[source]`。
     #[error("failed to build HTTP client: {source}")]
-    ClientBuild {
+    ClientBuildError {
         #[source]
         source: reqwest::Error,
     },

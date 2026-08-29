@@ -54,10 +54,10 @@ impl Artful {
     ///
     /// # Errors
     ///
-    /// 返回 [`ArtfulError::ClientBuild`] 当 HTTP 客户端构建失败。
+    /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败。
     pub fn with_config(config: Config) -> Result<Self> {
         let client = build_client(config.http.clone())
-            .map_err(|source| ArtfulError::ClientBuild { source })?;
+            .map_err(|source| ArtfulError::ClientBuildError { source })?;
 
         Ok(Self { config, client })
     }

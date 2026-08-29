@@ -95,7 +95,7 @@ impl Plugin for MyPlugin {
 
 - `ArtfulError` uses `thiserror` with English Display messages
 - `JsonDeserializeError` requires `source: Option<serde_json::Error>`
-- `RequestBuildError`/`ClientBuild` use `source: reqwest::Error`; `ClientBuild` must use explicit `#[source]` (`#[from]` is taken by `RequestFailed`)
+- `RequestBuildError`/`ClientBuildError` use `source: reqwest::Error`; `ClientBuildError` must use explicit `#[source]` (`#[from]` is taken by `RequestFailed`)
 
 ### Shortcut Trait
 

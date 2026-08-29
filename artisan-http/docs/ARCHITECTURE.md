@@ -436,7 +436,7 @@ impl Artful {
     /// 以默认配置创建实例
     pub fn new() -> Result<Self>;
 
-    /// 以指定配置创建实例（构造时构建 client，失败返回 ClientBuild）
+    /// 以指定配置创建实例（构造时构建 client，失败返回 ClientBuildError）
     pub fn with_config(config: Config) -> Result<Self>;
 
     /// 以指定配置与外部构建的 HTTP 客户端创建实例
@@ -910,7 +910,7 @@ let result = artful.artful(params, plugins).await;
 
 // HTTP 客户端构建失败（with_config 时 fail-fast）
 let result = Artful::with_config(config);
-// result: Err(ArtfulError::ClientBuild { .. })
+// result: Err(ArtfulError::ClientBuildError { .. })
 ```
 
 ---
@@ -1033,7 +1033,7 @@ wiremock = { version = "~0.6.5" }
 - [x] `Artful` 由静态类 + `OnceLock` 全局配置改为实例类型（`new`/`with_config`，fail-fast）
 - [x] `HttpOptions` 按 client/request 生命周期拆分为 `ClientOptions`/`RequestOptions`，消除全局 `timeout`/`connect_timeout` 死字段
 - [x] `Packer::content_type()` 自描述，默认链 JSON 请求自动补 `Content-Type`（仅缺失时补）
-- [x] 错误 Display 英文化；`InvalidUrl` → `RequestBuildError`；新增 `ClientBuild`
+- [x] 错误 Display 英文化；`InvalidUrl` → `RequestBuildError`；新增 `ClientBuildError`
 - [x] 删除 `FlowCtrl::cease()`（与 `skip_rest()` 重复）
 - [x] 文档（README/AGENTS/ARCHITECTURE）与 crate 元数据全量同步
 

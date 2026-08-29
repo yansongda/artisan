@@ -159,7 +159,7 @@ fn test_artful_new_and_accessors() {
     let artful = Artful::new().unwrap();
     assert!(artful.config().extra.is_empty());
 
-    // 失败路径：非法 user_agent 导致 client 构建失败 → ClientBuild
+    // 失败路径：非法 user_agent 导致 client 构建失败 → ClientBuildError
     let bad = Config {
         http: ClientOptions {
             user_agent: Some("bad\nua".to_string()),
@@ -168,7 +168,7 @@ fn test_artful_new_and_accessors() {
         ..Default::default()
     };
     let err = Artful::with_config(bad).unwrap_err();
-    assert!(matches!(err, ArtfulError::ClientBuild { .. }));
+    assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
 }
 
 // ============ Artful raw 方法测试 ============
