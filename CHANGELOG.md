@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > 本文件仅记录 artisan facade 相关变更，各子 crate 变更详见各自目录下的 CHANGELOG.md
 
+## [0.14.0] - 2026-08-29
+
+### Changed
+
+- **BREAKING**: 同步 `artisan-http` 0.14.0——`Artful` 实例化、`HttpOptions` 拆分为 `ClientOptions`/`RequestOptions`、`Content-Type` 自动补头等全部破坏性变更详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)；经 facade 整体 re-export，`artisan::http::get_client`、`artisan::http::HttpOptions` 等旧路径随之移除
+- 移除 facade 的 `cfg_attr(docsrs, feature(doc_cfg))` 死代码
+
 ## [0.13.1] - 2026-05-06
 
 ### Changed

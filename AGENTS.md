@@ -17,7 +17,7 @@ artisan/                    # Root package (facade)
 └── artisan-http/           # HTTP implementation crate
     ├── Cargo.toml
     ├── src/                # All implementation code
-    ├── tests/              # All tests (59 tests)
+    ├── tests/              # All tests (65 tests)
     └── examples/           # All examples
 ```
 
@@ -64,7 +64,7 @@ artisan-http = "~X.Y.Z"
 # Build & check (workspace)
 cargo check --workspace --all-features
 
-# Test (59 tests)
+# Test (65 tests)
 cargo test --workspace --all-features
 
 # Format & lint
@@ -93,6 +93,6 @@ cargo test --workspace --all-features   # All tests
 ## References
 
 - **Implementation details**: [artisan-http/AGENTS.md](artisan-http/AGENTS.md)
-- Architecture: `docs/ARCHITECTURE.md` (comprehensive)
+- Architecture: `artisan-http/docs/ARCHITECTURE.md` (comprehensive)
 - Examples: `artisan-http/examples/*.rs` (5 working demos)
 - CI: `.github/workflows/coding-linter.yml`, `.github/workflows/publish.yml`

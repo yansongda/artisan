@@ -8,7 +8,7 @@ artisan/
 ├── src/lib.rs              # Facade（Feature 控制的 re-export）
 └── artisan-http/           # HTTP 实现
     ├── src/                # 核心实现
-    ├── tests/              # 测试（59 个）
+    ├── tests/              # 测试（65 个）
     ├── examples/           # 示例
     └── docs/               # 架构文档
 ```
@@ -36,15 +36,15 @@ cargo add artisan --no-default-features
 ```toml
 # Cargo.toml
 [dependencies]
-artisan = "~0.13.1"
+artisan = "~0.14.0"
 
 # 直接依赖实现层
 [dependencies]
-artisan-http = "~0.13.1"
+artisan-http = "~0.14.0"
 
 # 纯 facade（禁用 HTTP 功能）
 [dependencies]
-artisan = { version = "~0.13.1", default-features = false }
+artisan = { version = "~0.14.0", default-features = false }
 ```
 
 ## 快速入口

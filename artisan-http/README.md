@@ -9,7 +9,8 @@
 - 🔄 **洋葱模型**: 请求层层穿透，响应层层返回
 - 🔌 **插件化**: 每个请求都是一个插件组合，高度灵活可定制
 - 🛡️ **类型安全**: Rust 类型系统确保配置和参数的类型安全
-- ⚡ **高性能**: 全局 HTTP Client 单例，共享连接池
+- ⚡ **高性能**: 实例化 `Artful`，`reqwest::Client` 内部 `Arc` 共享连接池
+- 📦 **Content-Type 自动补头**: JSON 请求默认自动携带 `Content-Type: application/json`（仅缺失时补，用户显式设置不覆盖）
 
 ## 安装
 
@@ -19,7 +20,7 @@ cargo add artisan-http
 
 ```toml
 [dependencies]
-artisan-http = "~0.13.1"
+artisan-http = "~0.14.0"
 ```
 
 ## 快速开始
@@ -66,7 +67,8 @@ async fn main() -> artisan_http::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(params, plugins).await?;
+    let artful = Artful::new()?;
+    let result = artful.artful(params, plugins).await?;
     
     if let artisan_http::Destination::Json(json) = result {
         println!("Response: {}", json);
@@ -111,7 +113,30 @@ let shortcut = MyApiShortcut {
     method: reqwest::Method::POST,
     url: "https://api.example.com/orders".to_string(),
 };
-let result = Artful::shortcut(shortcut, HashMap::new()).await?;
+let artful = Artful::new()?;
+let result = artful.shortcut(shortcut, HashMap::new()).await?;
+```
+
+### 全局单例（LazyLock）
+
+`Artful` 是实例类型（`reqwest::Client` 内部 `Arc`，`Clone` 廉价且共享连接池）。应用层推荐用 `std::sync::LazyLock` 构建全局单例，首访时初始化（可读环境变量）：
+
+```rust
+use std::sync::LazyLock;
+
+static ARTFUL: LazyLock<Artful> = LazyLock::new(|| {
+    Artful::with_config(load_config()).expect("failed to build Artful client")
+});
+
+// 零 panic 变体（ArtfulError 非 Clone，调用点需 map_err 转移错误所有权）
+static ARTFUL: LazyLock<Result<Artful, ArtfulError>> =
+    LazyLock::new(|| Artful::with_config(load_config()));
+// 调用点：
+// let artful = ARTFUL.as_ref().map_err(|e| ArtfulError::Other(format!("Artful init failed: {e}")))?;
+
+// 多实例：不同渠道各一个 static，连接池独立
+static ALIPAY: LazyLock<Artful> = /* ... */;
+static WECHAT: LazyLock<Artful> = /* ... */;
 ```
 
 ### 自定义插件
@@ -169,7 +194,7 @@ pub struct RocketConfig {
     pub url: String,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
-    pub http: HttpOptions,
+    pub http: RequestOptions,        // 请求级选项（仅 timeout）
     pub direction: DirectionKind,     // 响应解析策略
 }
 ```
@@ -225,13 +250,13 @@ cargo run -p artisan-http --example direction
 ## 测试
 
 ```bash
-# 运行所有测试（59 个）
+# 运行所有测试（65 个）
 cargo test -p artisan-http --all-features
 ```
 
 ## 文档
 
-- 详细架构设计：[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
+- 详细架构设计：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 项目说明：[AGENTS.md](AGENTS.md)
 
 ## 许可证

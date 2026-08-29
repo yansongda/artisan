@@ -29,7 +29,7 @@ use crate::shortcut::Shortcut;
 ///
 /// 实例类型：配置与 HTTP 客户端在构造时显式解析（fail-fast），
 /// 配置错误在构造期即暴露，支持多实例共存与测试隔离。
-/// `reqwest::Client` 内部为 `Arc`，[`Clone`](std::clone::Clone) 廉价且共享连接池；
+/// `reqwest::Client` 内部为 `Arc`，[`Clone`] 廉价且共享连接池；
 /// 应用层可配合 `std::sync::LazyLock` 构建全局单例（参见 README）。
 #[derive(Debug, Clone)]
 pub struct Artful {

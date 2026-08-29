@@ -45,6 +45,9 @@ pub struct Rocket {
     /// Rocket 配置（可修改）
     pub config: RocketConfig,
     
+    /// HTTP 客户端（由 `Artful` 实例注入，默认为框架内置客户端）
+    pub client: reqwest::Client,
+    
     /// HTTP 请求对象（最终发送的请求）
     pub radar: Option<reqwest::Request>,
     
@@ -63,6 +66,7 @@ pub struct Rocket {
 - `params` - 原始参数，整个生命周期中保持不变
 - `payload` - 业务参数，动态 HashMap
 - `config` - 请求配置，包含 method、url、headers、direction 等
+- `client` - HTTP 客户端，由 `Artful` 实例注入，插件不再依赖全局单例
 - `radar` - 最终构建的 HTTP Request
 - `destination_origin` - HTTP 响应
 - `destination` - 解析后的结果
@@ -88,17 +92,17 @@ pub struct RocketConfig {
     /// 请求体（可动态设置）
     pub body: Option<String>,
     
-    /// HTTP 选项（可动态修改）
-    pub http: HttpOptions,
+    /// 请求级 HTTP 选项（仅 timeout，单次请求生效）
+    pub http: RequestOptions,
     
     /// 响应解析策略（默认 Json，可动态修改）
     pub direction: DirectionKind,
 }
 
-/// HTTP 请求选项
-#[derive(Debug, Clone, Copy, Default)]
-pub struct HttpOptions {
-    /// 请求超时（秒）
+/// 客户端级 HTTP 选项（仅在构建 `reqwest::Client` 时生效，如 `Artful::with_config`）
+#[derive(Debug, Clone, Default)]
+pub struct ClientOptions {
+    /// 请求超时（秒），请求级可覆盖
     pub timeout: Option<u64>,
     
     /// 连接超时（秒）
@@ -110,8 +114,18 @@ pub struct HttpOptions {
     /// 每个 host 最大空闲连接数，默认 20
     pub pool_max_idle_per_host: Option<usize>,
     
-    /// User-Agent，默认 yansongda/artful-rs:{version}
-    pub user_agent: Option<&'static str>,
+    /// User-Agent，默认 yansongda/artisan-http:{version}
+    pub user_agent: Option<String>,
+}
+
+/// 请求级 HTTP 选项（仅对单次请求生效）
+///
+/// 仅含 `timeout`：reqwest 0.13 的 `RequestBuilder` 不提供 `connect_timeout`
+/// （该方法仅 `ClientBuilder` 支持），连接超时收敛为 client 级专属。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RequestOptions {
+    /// 请求超时（秒）
+    pub timeout: Option<u64>,
 }
 ```
 
@@ -130,18 +144,18 @@ pub struct HttpOptions {
 - 类型安全：字段类型明确，编译时检查
 - IDE 类型提示：自动补全、类型提示
 - 清晰分离：配置参数与业务参数分离
-- 可扩展：添加新配置只需修改 RocketConfig
+- 生命周期分离：请求级选项（`RequestOptions`）与 client 级选项（`ClientOptions`）按类型拆分，per-request 误设 pool 字段为编译错误
 
-### 2.3 Config - 全局框架配置
+### 2.3 Config - 框架配置
 
-Config 是框架级别的全局配置，通过 `Artful::config()` 初始化，支持任意扩展参数。
+Config 是框架级配置，在构造 `Artful` 实例时显式传入，支持任意扩展参数。
 
 ```rust
-/// 框架全局配置
+/// 框架配置
 #[derive(Debug, Clone, Default)]
 pub struct Config {
-    /// HTTP 默认选项
-    pub http: HttpOptions,
+    /// HTTP 客户端级默认选项
+    pub http: ClientOptions,
     
     /// 扩展配置：支持任意渠道/模块参数
     pub extra: HashMap<String, Value>,
@@ -156,7 +170,7 @@ pub struct Config {
 **使用示例**：
 
 ```rust
-use artisan::http::{Artful, Config, HttpOptions};
+use artisan_http::{Artful, ClientOptions, Config};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -171,22 +185,40 @@ extra.insert("wechat".to_string(), json!({
 }));
 
 let config = Config {
-    http: HttpOptions {
+    http: ClientOptions {
         timeout: Some(5),
         connect_timeout: Some(3),
         ..Default::default()
     },
     extra,
-    ..Default::default()
 };
 
-Artful::config(config);
+// 构造时即构建 HTTP 客户端（fail-fast，配置错误立即暴露）
+let artful = Artful::with_config(config)?;
 
-// 后续获取配置
-let global_config = Artful::get_config();
-if let Some(alipay) = global_config.extra.get("alipay") {
+// 后续经实例读取配置
+if let Some(alipay) = artful.config().extra.get("alipay") {
     let app_id = alipay.get("app_id");
 }
+```
+
+**应用层全局单例（LazyLock 推荐）**：
+
+```rust
+use std::sync::LazyLock;
+
+// 首访初始化，可读环境变量
+static ARTFUL: LazyLock<Artful> = LazyLock::new(|| {
+    Artful::with_config(load_config()).expect("failed to build Artful client")
+});
+
+// 零 panic 变体
+static ARTFUL: LazyLock<Result<Artful, ArtfulError>> =
+    LazyLock::new(|| Artful::with_config(load_config()));
+
+// 多实例：不同渠道各一个 static，连接池独立
+static ALIPAY: LazyLock<Artful> = /* ... */;
+static WECHAT: LazyLock<Artful> = /* ... */;
 ```
 
 ### 2.4 Plugin - 插件
@@ -305,12 +337,6 @@ impl FlowCtrl {
         self.is_ceased = true;
     }
     
-    /// 终止并标记
-    pub fn cease(&mut self) {
-        self.is_ceased = true;
-        self.skip_rest();
-    }
-    
     /// 检查是否已终止
     pub fn is_ceased(&self) -> bool {
         self.is_ceased
@@ -396,29 +422,39 @@ impl Shortcut for QueryOrderShortcut {
 
 ### 3.1 Artful - 主入口
 
+Artful 是实例类型：配置与 HTTP 客户端在构造时显式解析（fail-fast），支持多实例共存与测试隔离。
+
 ```rust
 /// Artful 主类 - 框架入口
-pub struct Artful;
+#[derive(Debug, Clone)]
+pub struct Artful {
+    config: Config,
+    client: reqwest::Client,
+}
 
 impl Artful {
-    /// 初始化框架全局配置
-    pub fn config(config: Config) -> bool {
-        // 首次调用时设置配置，后续调用返回 false（除非 config._force = true）
-    }
-    
-    /// 获取全局配置
-    pub fn get_config() -> &'static Config;
-    
-    /// 检查是否已初始化配置
-    pub fn has_config() -> bool;
+    /// 以默认配置创建实例
+    pub fn new() -> Result<Self>;
+
+    /// 以指定配置创建实例（构造时构建 client，失败返回 ClientBuild）
+    pub fn with_config(config: Config) -> Result<Self>;
+
+    /// 获取实例配置
+    pub fn config(&self) -> &Config;
+
+    /// 获取实例 HTTP 客户端
+    pub fn client(&self) -> &reqwest::Client;
     
     /// 执行插件链
     pub async fn artful(
+        &self,
         params: HashMap<String, Value>,
         plugins: Vec<Arc<dyn Plugin>>,
     ) -> Result<Destination> {
         // 构建载体（params 存储原始参数，payload 初始为空）
         let mut rocket = Rocket::new(params);
+        // 注入实例客户端
+        rocket.client = self.client.clone();
         
         // 构建流向控制器
         let mut ctrl = FlowCtrl::new(plugins);
@@ -432,56 +468,76 @@ impl Artful {
     
     /// 使用快捷方式执行请求
     pub async fn shortcut<S: Shortcut>(
+        &self,
         shortcut: S,
         params: HashMap<String, Value>,
     ) -> Result<Destination> {
         let plugins = shortcut.get_plugins(&params);
-        Self::artful(params, plugins).await
+        self.artful(params, plugins).await
     }
     
     /// 直接调用 HTTP（跳过插件）
-    pub async fn raw(request: reqwest::Request) -> Result<reqwest::Response> {
-        let client = get_client();
-        client.execute(request).await.map_err(ArtfulError::RequestFailed)
+    pub async fn raw(&self, request: reqwest::Request) -> Result<reqwest::Response> {
+        self.client
+            .execute(request)
+            .await
+            .map_err(ArtfulError::RequestFailed)
     }
 }
 ```
 
 ### 3.2 HTTP 客户端设计
 
-**核心设计决策**：HTTP Client 与 Config 解耦
+**核心设计决策**：HTTP Client 由 `Artful` 实例持有，与全局状态解耦
 
 **原因**：
 - reqwest::Client 内部维护连接池（hyper 管理），per-instance
 - Client 配置（timeout、headers、proxy）构建时固定，不可修改
-- Per-request timeout 通过 `RocketConfig.http` 设置
-- 全局单例共享连接池，性能最优
-- 连接池参数从全局 `Config.http` 读取
+- Per-request timeout 通过 `RocketConfig.http`（`RequestOptions`）设置，自动覆盖 client 级默认
+- `reqwest::Client` 内部 `Arc`，实例 `Clone` 廉价且共享连接池
+- 客户端级选项（`ClientOptions`）在构造时全部接线，配置错误编译期/构造期暴露
 
 ```rust
 use std::sync::OnceLock;
 use std::time::Duration;
 
-const DEFAULT_USER_AGENT: &str = concat!("yansongda/artful-rs:", env!("CARGO_PKG_VERSION"));
+const DEFAULT_POOL_IDLE_TIMEOUT: u64 = 90;
+const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 20;
+const DEFAULT_USER_AGENT: &str = concat!("yansongda/artisan-http:", env!("CARGO_PKG_VERSION"));
 
-/// 全局 HTTP 客户端单例（共享连接池）
-pub fn get_client() -> &'static reqwest::Client {
+/// 框架默认客户端（供直接构造 Rocket 使用，惰性初始化一次）
+pub(crate) fn default_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    
+
     CLIENT.get_or_init(|| {
-        build_client(Artful::get_config().http)
-            .unwrap_or_else(|_| fallback_client())
+        build_client(ClientOptions::default()).unwrap_or_else(|_| fallback_client())
     })
 }
 
-fn build_client(http: HttpOptions) -> Result<reqwest::Client, reqwest::Error> {
-    let user_agent = http.user_agent.unwrap_or(DEFAULT_USER_AGENT);
-    
-    reqwest::Client::builder()
-        .pool_idle_timeout(Some(Duration::from_secs(http.pool_idle_timeout.unwrap_or(90))))
-        .pool_max_idle_per_host(http.pool_max_idle_per_host.unwrap_or(20))
-        .user_agent(user_agent)
-        .build()
+/// 按 ClientOptions 构建 HTTP 客户端（消费全部字段）
+pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, reqwest::Error> {
+    let pool_idle_timeout = options.pool_idle_timeout.unwrap_or(DEFAULT_POOL_IDLE_TIMEOUT);
+    let pool_max_idle_per_host = options
+        .pool_max_idle_per_host
+        .unwrap_or(DEFAULT_POOL_MAX_IDLE_PER_HOST);
+    let user_agent = options
+        .user_agent
+        .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
+
+    let mut builder = reqwest::Client::builder()
+        .pool_idle_timeout(Some(Duration::from_secs(pool_idle_timeout)))
+        .pool_max_idle_per_host(pool_max_idle_per_host)
+        .user_agent(user_agent);
+
+    if let Some(secs) = options.timeout {
+        builder = builder.timeout(Duration::from_secs(secs));
+    }
+
+    if let Some(secs) = options.connect_timeout {
+        builder = builder.connect_timeout(Duration::from_secs(secs));
+    }
+
+    builder.build()
 }
 
 fn fallback_client() -> reqwest::Client {
@@ -551,8 +607,10 @@ pub struct StartPlugin;
 #[async_trait]
 impl Plugin for StartPlugin {
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> Result<()> {
-        // 将 params 合并到 payload
-        rocket.merge_payload(rocket.get_params().clone());
+        // 将 params 合并到 payload（直接字段访问，省一次中间 HashMap 分配）
+        if rocket.payload.is_empty() {
+            rocket.merge_params_to_payload();
+        }
         next.call(rocket).await
     }
 }
@@ -567,10 +625,16 @@ pub struct AddPayloadBodyPlugin;
 #[async_trait]
 impl Plugin for AddPayloadBodyPlugin {
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> Result<()> {
-        // 如果未手动指定 body，将 payload 序列化为 JSON
+        // 如果未手动指定 body，将 payload 按 packer 序列化
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
-            let body = rocket.packer.pack(&rocket.payload)?;
-            rocket.config.body = Some(body);
+            rocket.config.body = Some(rocket.packer.pack(&rocket.payload)?);
+
+            // 请求头缺失 Content-Type 时按 packer 声明补头（不覆盖用户显式设置）
+            if let Some(ct) = rocket.packer.content_type() {
+                rocket.config.headers
+                    .entry("Content-Type".to_string())
+                    .or_insert_with(|| ct.to_string());
+            }
         }
         
         next.call(rocket).await
@@ -587,35 +651,42 @@ pub struct AddRadarPlugin;
 #[async_trait]
 impl Plugin for AddRadarPlugin {
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> Result<()> {
-        let method = rocket.config.method.clone();
-        let url = rocket.config.url.clone();
-        
-        let client = get_client();
-        let mut request_builder = client.request(method, &url);
+        // 使用实例注入的客户端
+        let mut request_builder =
+            rocket.client.request(rocket.config.method.clone(), &rocket.config.url);
         
         // 添加 headers
         for (key, value) in &rocket.config.headers {
             request_builder = request_builder.header(key, value);
         }
         
-        // 添加 body
+        // 添加 body；body 未设置且 payload 非空时走 fallback 打包分支：
+        // 缺失 Content-Type 时直接补到 request_builder
+        // （该分支位于 headers 遍历之后，写回 config.headers 不会再生效）
         if let Some(body) = &rocket.config.body {
             request_builder = request_builder.body(body.clone());
         } else if !rocket.payload.is_empty() {
             let body = rocket.packer.pack(&rocket.payload)?;
+
+            if !rocket.config.headers.contains_key("Content-Type") {
+                if let Some(ct) = rocket.packer.content_type() {
+                    request_builder = request_builder.header("Content-Type", ct);
+                }
+            }
+
             request_builder = request_builder.body(body);
         }
         
-        // 应用 timeout（per-request）
+        // 应用 timeout（per-request，自动覆盖 client 级默认）
         if let Some(timeout) = rocket.config.http.timeout {
             request_builder = request_builder.timeout(
                 std::time::Duration::from_secs(timeout)
             );
         }
         
-        // build 失败返回 InvalidUrl 错误
+        // build 失败返回 RequestBuildError 错误（覆盖全部构建失败而非仅 URL）
         let request = request_builder.build()
-            .map_err(|e| ArtfulError::InvalidUrl(e.to_string()))?;
+            .map_err(|e| ArtfulError::RequestBuildError { source: e })?;
         rocket.radar = Some(request);
         
         next.call(rocket).await
@@ -641,10 +712,8 @@ impl Plugin for ParserPlugin {
         let request = rocket.radar.take()
             .ok_or(ArtfulError::MissingRequest)?;
         
-        let client = get_client();
-        
-        // 发送请求，失败则返回 RequestFailed 错误
-        let response = client.execute(request).await
+        // 使用实例注入的客户端发送请求，失败则返回 RequestFailed 错误
+        let response = rocket.client.execute(request).await
             .map_err(ArtfulError::RequestFailed)?;
         rocket.destination_origin = Some(response);
         
@@ -689,18 +758,22 @@ impl Plugin for ParserPlugin {
 ### 5.1 初始化框架
 
 ```rust
-use artisan::http::{Artful, Config};
+use artisan_http::Artful;
 
-// 初始化框架配置（可选）
-// config._force = true 时强制覆盖已存在的配置
-Artful::config(Config::default());
+// 默认配置创建实例
+let artful = Artful::new()?;
+
+// 或以自定义配置创建（构造时构建 client，fail-fast）
+let artful = Artful::with_config(config)?;
+
+// 应用层全局单例推荐 LazyLock（见 §2.3）
 ```
 
 ### 5.2 基础使用
 
 ```rust
-use artisan::http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-use artisan::http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -713,7 +786,7 @@ struct MethodUrlPlugin {
 
 #[async_trait]
 impl Plugin for MethodUrlPlugin {
-    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan::Result<()> {
+    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
         rocket.config.method = self.method.clone();
         rocket.config.url = self.url.clone();
         next.call(rocket).await
@@ -721,13 +794,15 @@ impl Plugin for MethodUrlPlugin {
 }
 
 #[tokio::main]
-async fn main() -> artisan::Result<()> {
+async fn main() -> artisan_http::Result<()> {
+    let artful = Artful::new()?;
+
     let params = HashMap::from([
         ("order_id", json!("123")),
         ("amount", json!(100)),
     ]);
 
-    let plugins: Vec<Arc<dyn artisan::Plugin>> = vec![
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
         Arc::new(MethodUrlPlugin {
             method: reqwest::Method::POST,
@@ -738,9 +813,9 @@ async fn main() -> artisan::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(params, plugins).await?;
+    let result = artful.artful(params, plugins).await?;
     
-    if let artisan::Destination::Json(json) = result {
+    if let artisan_http::Destination::Json(json) = result {
         println!("Response: {}", json);
     }
 
@@ -751,8 +826,8 @@ async fn main() -> artisan::Result<()> {
 ### 5.3 使用 Shortcut 快捷方式
 
 ```rust
-use artisan::http::{Artful, Shortcut, Plugin};
-use artisan::http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::{Artful, Shortcut, Plugin};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -779,11 +854,12 @@ impl Shortcut for MyApiShortcut {
 }
 
 // 构造 Shortcut 实例并调用
+let artful = Artful::new()?;
 let shortcut = MyApiShortcut {
     method: reqwest::Method::POST,
     url: "https://api.example.com/orders".to_string(),
 };
-let result = Artful::shortcut(shortcut, HashMap::new()).await?;
+let result = artful.shortcut(shortcut, HashMap::new()).await?;
 ```
 
 **说明**：Shortcut 不需要 `Default` bound，可以在构造时携带任意状态（method、url 等），更灵活地配置请求。
@@ -791,7 +867,7 @@ let result = Artful::shortcut(shortcut, HashMap::new()).await?;
 ### 5.4 自定义插件
 
 ```rust
-use artisan::http::{Plugin, Rocket, flow_ctrl::Next};
+use artisan_http::{Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
 
 pub struct SignaturePlugin {
@@ -800,7 +876,7 @@ pub struct SignaturePlugin {
 
 #[async_trait]
 impl Plugin for SignaturePlugin {
-    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan::Result<()> {
+    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
         rocket.config.headers.insert(
             "X-Signature".to_string(),
             sign(&self.api_key, &rocket.payload),
@@ -815,16 +891,20 @@ impl Plugin for SignaturePlugin {
 
 ```rust
 // HTTP 请求失败
-let result = Artful::artful(params, plugins).await;
+let result = artful.artful(params, plugins).await;
 // result: Err(ArtfulError::RequestFailed(...))
 
 // radar 未构建
-let result = Artful::artful(params, vec![ParserPlugin]).await;
+let result = artful.artful(params, vec![Arc::new(ParserPlugin)]).await;
 // result: Err(ArtfulError::MissingRequest)
 
 // JSON 解析失败
-let result = Artful::artful(params, plugins).await;
-// result: Err(ArtfulError::JsonSerializeError(...))
+let result = artful.artful(params, plugins).await;
+// result: Err(ArtfulError::JsonDeserializeError { .. })
+
+// HTTP 客户端构建失败（with_config 时 fail-fast）
+let result = Artful::with_config(config);
+// result: Err(ArtfulError::ClientBuild { .. })
 ```
 
 ---
@@ -834,19 +914,17 @@ let result = Artful::artful(params, plugins).await;
 采用 Rust 标准惯例：**Trait 定义放在对应模块顶层**。
 
 ```
-artful-rs/
+artisan-http/
 ├── Cargo.toml
-├── Cargo.lock
 ├── README.md
-├── .gitignore
 ├── src/
 │   ├── lib.rs                  # 框架入口，导出公共 API
 │   │
-│   ├── artisan.rs               # Artful 主入口
-│   ├── rocket.rs               # Rocket + RocketConfig + HttpOptions
+│   ├── artful.rs               # Artful 主入口（实例类型）
+│   ├── rocket.rs               # Rocket + RocketConfig + ClientOptions/RequestOptions
 │   ├── flow_ctrl.rs            # FlowCtrl 流向控制 + Next 闭包
-│   ├── config.rs               # Config + LoggerConfig
-│   ├── error.rs                # ArtfulError 错误定义
+│   ├── config.rs               # Config（http: ClientOptions + extra）
+│   ├── error.rs                # ArtfulError 错误定义（英文 Display）
 │   │
 │   ├── plugin.rs               # Plugin trait
 │   ├── plugins/                # 内置插件实现
@@ -863,12 +941,12 @@ artful-rs/
 │   │   ├── mod.rs              # 导出所有内置 Direction
 │   │   └── json.rs             # Json
 │   │
-│   ├── packer.rs               # Packer trait
+│   ├── packer.rs               # Packer trait（pack/unpack/content_type）
 │   ├── packers/                # 内置 Packer 实现
 │   │   ├── mod.rs              # 导出所有内置 Packer
 │   │   └── json.rs             # JsonPacker
 │   │
-│   └── http.rs                 # HTTP 客户端封装（reqwest 单例）
+│   └── http.rs                 # build_client / default_client（pub(crate)）
 │
 ├── examples/
 │   ├── basic.rs                # 基础使用示例
@@ -878,15 +956,13 @@ artful-rs/
 │   └── direction.rs            # Direction 响应解析策略示例
 │
 ├── tests/
-│   ├── artisan_test.rs
+│   ├── artful_test.rs
 │   ├── direction_test.rs
 │   ├── flow_ctrl_test.rs
 │   ├── integration_test.rs
 │   ├── packer_test.rs
 │   ├── rocket_test.rs
 │   └── shortcut_test.rs
-│
-├── target/                     # 编译输出（gitignore）
 │
 └── docs/
     └── ARCHITECTURE.md         # 架构设计文档
@@ -897,10 +973,10 @@ artful-rs/
 | 模块 | 说明 | Trait/类型 |
 |------|------|-----------|
 | `src/lib.rs` | 框架入口 | 导出公共 API |
-| `src/artisan.rs` | 主入口 | `Artful` struct |
-| `src/rocket.rs` | 请求载体 + 配置 | `Rocket`, `RocketConfig`, `HttpOptions` |
+| `src/artful.rs` | 主入口 | `Artful` struct（实例类型） |
+| `src/rocket.rs` | 请求载体 + 配置 | `Rocket`, `RocketConfig`, `ClientOptions`, `RequestOptions` |
 | `src/flow_ctrl.rs` | 流向控制器 | `FlowCtrl`, `Next` |
-| `src/config.rs` | 全局配置 | `Config`, `LoggerConfig` |
+| `src/config.rs` | 框架配置 | `Config` |
 | `src/plugin.rs` | 插件 trait | `Plugin` trait |
 | `src/plugins/` | 内置插件 | `StartPlugin`, `AddRadarPlugin`, `ParserPlugin`, `AddPayloadBodyPlugin` |
 | `src/shortcut.rs` | 快捷方式 trait | `Shortcut` trait |
@@ -908,26 +984,25 @@ artful-rs/
 | `src/directions/` | 内置解析器 | `Json` |
 | `src/packer.rs` | 序列化 trait | `Packer` trait |
 | `src/packers/` | 内置序列化器 | `JsonPacker` |
-| `src/http.rs` | HTTP 客户端 | reqwest 全局单例 |
+| `src/http.rs` | HTTP 客户端构建 | `build_client` / `default_client`（pub(crate)） |
 | `src/error.rs` | 错误 | `ArtfulError` enum |
 
 ---
 
 ## 七、依赖设计
 
+与真实 `Cargo.toml` 对齐：
+
 ```toml
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
-reqwest = { version = "0.12", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-thiserror = "2"
+async-trait = { version = "~0.1.89" }
+reqwest = { version = "~0.13.2", features = ["json"] }
+serde_json = { version = "~1.0.149" }
+thiserror = { version = "~2.0.18" }
 
 [dev-dependencies]
-tokio-test = "0.4"
-wiremock = "0.6"
+tokio = { version = "~1.52.0", features = ["rt-multi-thread", "macros"] }
+wiremock = { version = "~0.6.5" }
 ```
 
 ---
@@ -946,6 +1021,15 @@ wiremock = "0.6"
 - [x] Shortcut trait
 - [x] 基础测试覆盖（18 tests）
 - [x] README 文档
+
+### v0.14.0 - 实例化与配置治理（2026-08-29）
+
+- [x] `Artful` 由静态类 + `OnceLock` 全局配置改为实例类型（`new`/`with_config`，fail-fast）
+- [x] `HttpOptions` 按 client/request 生命周期拆分为 `ClientOptions`/`RequestOptions`，消除全局 `timeout`/`connect_timeout` 死字段
+- [x] `Packer::content_type()` 自描述，默认链 JSON 请求自动补 `Content-Type`（仅缺失时补）
+- [x] 错误 Display 英文化；`InvalidUrl` → `RequestBuildError`；新增 `ClientBuild`
+- [x] 删除 `FlowCtrl::cease()`（与 `skip_rest()` 重复）
+- [x] 文档（README/AGENTS/ARCHITECTURE）与 crate 元数据全量同步
 
 ### v0.2.0 - 增强
 
