@@ -6,7 +6,8 @@
 //!
 //! - [`Rocket`] - 请求载体，携带所有请求/响应数据
 //! - [`RocketConfig`] - HTTP 请求配置（method, url, headers 等）
-//! - [`HttpOptions`] - HTTP 选项（timeout, `connect_timeout`)
+//! - [`ClientOptions`] - 客户端级 HTTP 选项（构建 `reqwest::Client` 时生效）
+//! - [`RequestOptions`] - 请求级 HTTP 选项（仅 timeout，单次请求生效）
 //!
 //! # 设计说明
 //!
@@ -31,7 +32,7 @@ pub struct RocketConfig {
     pub url: String,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
-    pub http: HttpOptions,
+    pub http: RequestOptions,
     pub direction: DirectionKind,
 }
 
@@ -42,18 +43,21 @@ impl Default for RocketConfig {
             url: String::new(),
             headers: HashMap::new(),
             body: None,
-            http: HttpOptions::default(),
+            http: RequestOptions::default(),
             direction: DirectionKind::Json,
         }
     }
 }
 
-/// HTTP 连接选项
+/// 客户端级 HTTP 选项
 ///
-/// 未设置的字段使用 reqwest 默认值或框架默认值。
-#[derive(Debug, Clone, Copy, Default)]
-pub struct HttpOptions {
-    /// 请求超时（秒）
+/// 仅在构建 `reqwest::Client` 时生效（如 [`Artful::with_config`]），
+/// 对该客户端发出的所有请求生效。未设置的字段使用 reqwest 默认值或框架默认值。
+///
+/// [`Artful::with_config`]: crate::artful::Artful::with_config
+#[derive(Debug, Clone, Default)]
+pub struct ClientOptions {
+    /// 请求超时（秒），请求级可覆盖
     pub timeout: Option<u64>,
 
     /// 连接超时（秒）
@@ -66,7 +70,19 @@ pub struct HttpOptions {
     pub pool_max_idle_per_host: Option<usize>,
 
     /// User-Agent 字符串
-    pub user_agent: Option<&'static str>,
+    pub user_agent: Option<String>,
+}
+
+/// 请求级 HTTP 选项
+///
+/// 仅对单次请求生效（[`RocketConfig::http`]）。
+///
+/// 仅含 `timeout`：reqwest 0.13 的 `RequestBuilder` 不提供 `connect_timeout`
+/// （该方法仅 `ClientBuilder` 支持），请求级连接超时无法表达。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RequestOptions {
+    /// 请求超时（秒）
+    pub timeout: Option<u64>,
 }
 
 /// 请求载体
@@ -82,6 +98,9 @@ pub struct Rocket {
 
     /// Rocket 配置（可修改）
     pub config: RocketConfig,
+
+    /// HTTP 客户端（由 `Artful` 实例注入，默认为框架内置客户端）
+    pub client: reqwest::Client,
 
     /// HTTP 请求对象
     pub radar: Option<reqwest::Request>,
@@ -102,6 +121,7 @@ impl std::fmt::Debug for Rocket {
             .field("params", &self.params)
             .field("payload", &self.payload)
             .field("config", &self.config)
+            .field("client", &self.client)
             .finish_non_exhaustive()
     }
 }
@@ -117,6 +137,7 @@ impl Rocket {
             params,
             payload: HashMap::new(),
             config: RocketConfig::default(),
+            client: crate::http::default_client().clone(),
             radar: None,
             destination_origin: None,
             destination: None,
@@ -132,8 +153,10 @@ impl Rocket {
     /// 合并参数到 payload
     ///
     /// 将 params 中的参数合并到 payload，用于 `StartPlugin` 初始化 payload
-    pub fn merge_payload(&mut self, params: HashMap<String, Value>) {
-        self.payload.extend(params);
+    pub fn merge_params_to_payload(&mut self) {
+        for (k, v) in self.params.iter() {
+            self.payload.insert(k.clone(), v.clone());
+        }
     }
 
     /// 设置 HTTP 方法
@@ -149,6 +172,14 @@ impl Rocket {
     /// 添加请求头
     pub fn add_header(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.config.headers.insert(key.into(), value.into());
+    }
+
+    /// 判断是否已设置指定请求头（头名不区分大小写，符合 RFC 9110 语义）
+    pub(crate) fn has_header(&self, name: &str) -> bool {
+        self.config
+            .headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case(name))
     }
 
     /// 设置请求体

@@ -28,4 +28,12 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
     ///
     /// 返回错误当反序列化失败。
     fn unpack(&self, data: &str) -> Result<Value>;
+
+    /// 获取序列化后请求体的 Content-Type
+    ///
+    /// 返回 `None` 表示不声明 Content-Type（默认）。
+    /// 框架仅在请求头缺失 `Content-Type` 时补填该值，不会覆盖用户显式设置。
+    fn content_type(&self) -> Option<&'static str> {
+        None
+    }
 }

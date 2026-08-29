@@ -1,4 +1,4 @@
-use artisan_http::{HttpOptions, Rocket, RocketConfig};
+use artisan_http::{ClientOptions, RequestOptions, Rocket, RocketConfig};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -27,14 +27,20 @@ fn test_rocket_new() {
 
 #[test]
 fn test_http_options_default() {
-    let http = HttpOptions::default();
-    assert!(http.timeout.is_none());
-    assert!(http.connect_timeout.is_none());
+    let client = ClientOptions::default();
+    assert!(client.timeout.is_none());
+    assert!(client.connect_timeout.is_none());
+    assert!(client.pool_idle_timeout.is_none());
+    assert!(client.pool_max_idle_per_host.is_none());
+    assert!(client.user_agent.is_none());
+
+    let request = RequestOptions::default();
+    assert!(request.timeout.is_none());
 }
 
 #[test]
-fn test_http_options_with_timeout() {
-    let http = HttpOptions {
+fn test_client_options_with_timeout() {
+    let http = ClientOptions {
         timeout: Some(30),
         connect_timeout: Some(10),
         ..Default::default()
@@ -54,13 +60,16 @@ fn test_rocket_from_hashmap() {
 }
 
 #[test]
-fn test_rocket_merge_payload() {
-    let mut rocket = Rocket::new(HashMap::new());
+fn test_rocket_merge_params_to_payload() {
     let mut params = HashMap::new();
     params.insert("merged".to_string(), json!("value"));
 
-    rocket.merge_payload(params);
+    let mut rocket = Rocket::new(params);
+
+    rocket.merge_params_to_payload();
     assert!(rocket.payload.contains_key("merged"));
+    // params 保持不变
+    assert!(rocket.get_params().contains_key("merged"));
 }
 
 #[test]
@@ -181,8 +190,8 @@ fn test_rocket_set_body_overwrite() {
 }
 
 #[test]
-fn test_http_options_pool_settings() {
-    let http = HttpOptions {
+fn test_client_options_pool_settings() {
+    let http = ClientOptions {
         pool_idle_timeout: Some(90),
         pool_max_idle_per_host: Some(20),
         ..Default::default()

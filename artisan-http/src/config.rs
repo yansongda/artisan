@@ -5,13 +5,13 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::rocket::HttpOptions;
+use crate::rocket::ClientOptions;
 
 /// 框架全局配置
 #[derive(Debug, Clone, Default)]
 pub struct Config {
-    /// HTTP 默认选项
-    pub http: HttpOptions,
+    /// HTTP 客户端级默认选项
+    pub http: ClientOptions,
 
     /// 扩展配置：支持任意渠道/模块参数
     ///

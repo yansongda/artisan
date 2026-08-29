@@ -1,5 +1,3 @@
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 //! Artisan workspace facade，通过 feature 控制 re-export。
 //!
 //! # Features

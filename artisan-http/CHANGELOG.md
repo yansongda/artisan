@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-08-29
+
+> **破坏性变更版本**：本版本集中清理历史 API（不做兼容层），升级前请完整阅读以下内容。
+
+### ⚠️ 行为变更（升级必读）
+
+- **JSON 请求默认携带 `Content-Type: application/json`**：默认插件链（`AddPayloadBodyPlugin` 打包分支与 `AddRadarPlugin` fallback 打包分支）在请求头缺失 `Content-Type` 时按 `Packer::content_type()` 自动补头；用户显式设置的任何 `Content-Type` 永不覆盖。判重按头名不区分大小写（RFC 9110）：无论以 `Content-Type` 还是小写 `content-type` 显式设置，均不会补出重复头。注意：头存储（`config.headers`）区分大小写——若自行同时设置不同大小写的同名键（如 `Content-Type` 与 `content-type`），两者都会发送，请勿重复设置。
+- **此前无效的全局配置开始生效**：`Config.http.timeout` / `connect_timeout` 原为死字段（构建 client 时被忽略），本版本起真正接线。升级后请复核已配置的超时取值，原依赖"配置无效"行为的请求可能出现超时。
+
+### Added
+
+- `Artful` 实例类型：`new()` / `with_config(Config)`（构造时构建 client，fail-fast 返回 `ClientBuildError`）/ `config()` / `client()` / `artful()` / `shortcut()` / `raw()`；配合 `std::sync::LazyLock` 可构建全局单例或多实例
+- `Artful::with_builder(config, customize)`：以 `config.http` 为基座（框架默认值兜底）、经回调叠加 `reqwest::ClientBuilder` 能力（代理、TLS 证书、cookie 会话、重定向策略等）后构建；回调内后写的 setter 覆盖先写值
+- `Artful::with_client(config, client)`：注入外部构建的 `reqwest::Client`（跨实例共享连接池、client 在别处构建的场景）；注入的 client 原样生效，`config.http` 不作用于它，仅作为配置记录。需要基于 `config.http` 的定制构建请用 `with_builder`
+- `Packer::content_type()` 默认方法（默认返回 `None`），`JsonPacker` 返回 `Some("application/json")`，自定义 Packer 声明自己的 MIME 即自动生效
+- 错误变体 `ClientBuildError { source: reqwest::Error }`（与 `RequestBuildError` 命名对齐）
+
+### Changed
+
+- **BREAKING**: `HttpOptions` 拆分为 `ClientOptions`（client 级：`timeout` / `connect_timeout` / `pool_idle_timeout` / `pool_max_idle_per_host` / `user_agent`，`user_agent` 由 `Option<&'static str>` 放宽为 `Option<String>`）与 `RequestOptions`（请求级，仅 `timeout`）；`Config.http` 为 `ClientOptions`，`RocketConfig.http` 为 `RequestOptions`，per-request 误设 pool 字段改为编译错误
+- **BREAKING**: `Artful` 由静态类 + `OnceLock` 全局配置改为实例类型，删除全部静态 API（`Artful::config()` / `Artful::get_config()` / `Artful::has_config()`）与 `GLOBAL_CONFIG`；原单元结构体上的 `Default`/`Copy` derive 随之移除，`Artful::default()`、unit 字面量 `Artful` 与按值 `Copy` 传递不再可用
+- **BREAKING**: 错误变体 `InvalidUrl` 更名 `RequestBuildError`，语义覆盖 `request_builder.build()` 全部失败而非仅 URL
+- **BREAKING**: `ArtfulError` 全部 Display 消息英文化（变体名不变，程序化匹配不受影响）
+
+### Removed
+
+- **BREAKING**: 删除公共 `artisan_http::get_client()`（HTTP client 由 `Artful` 实例持有，`Rocket.client` 注入）
+- **BREAKING**: 删除 `FlowCtrl::cease()`（与 `skip_rest()` 行为相同），统一使用 `skip_rest()`
+- **BREAKING**: 删除 `Rocket::merge_payload(HashMap)`，由 `Rocket::merge_params_to_payload()` 替代（省一次中间 HashMap 分配）
+- **BREAKING**: 删除请求级 `connect_timeout` 字段（reqwest 0.13 的 `RequestBuilder` 不提供该方法，连接超时收敛为 client 级专属）
+
+### Fixed
+
+- 默认插件链发出的 JSON body 缺失 `Content-Type` 头（对接严格校验 Content-Type 的服务端会失败）
+- `Config.http.timeout` / `connect_timeout` 死字段：client 级全部字段接线生效（请求级 `RequestBuilder::timeout` 自动覆盖 client 级默认）
+- 文档与元数据：README/AGENTS/ARCHITECTURE 同步实例 API；`Cargo.toml` 补 `readme` / `keywords` / `categories`
+
 ## [0.13.1] - 2026-05-06
 
 ### Changed

@@ -1,24 +1,33 @@
 //! 配置初始化示例
 
-use artisan_http::{Artful, Config, HttpOptions};
+use artisan_http::{Artful, ClientOptions, Config};
 use serde_json::json;
 use std::collections::HashMap;
 
 #[tokio::main]
-async fn main() {
-    // 基础配置初始化
-    Artful::config(Config::default());
+async fn main() -> artisan_http::Result<()> {
+    // 基础用法：默认配置创建实例（构造时即构建 client，fail-fast）
+    let artful = Artful::new()?;
 
-    // 带 HTTP 选项的配置
+    // 带 HTTP 客户端选项的配置：client 级选项对该实例发出的所有请求生效
     let config_with_http = Config {
-        http: HttpOptions {
+        http: ClientOptions {
             timeout: Some(10),
             connect_timeout: Some(5),
-            ..Default::default()
+            pool_idle_timeout: Some(90),
+            pool_max_idle_per_host: Some(20),
+            user_agent: Some("my-app/1.0".to_string()),
         },
-        ..Default::default()
+        extra: HashMap::new(),
     };
-    Artful::config(config_with_http);
+    let artful_with_http = Artful::with_config(config_with_http)?;
+
+    // 经实例读取配置
+    println!(
+        "HTTP timeout: {:?}, connect_timeout: {:?}",
+        artful_with_http.config().http.timeout,
+        artful_with_http.config().http.connect_timeout
+    );
 
     // 带扩展配置（如支付渠道配置）
     let mut extra = HashMap::new();
@@ -39,23 +48,23 @@ async fn main() {
 
     let config_with_extra = Config {
         extra,
-        http: HttpOptions {
+        http: ClientOptions {
             timeout: Some(5),
             connect_timeout: Some(3),
             ..Default::default()
         },
-        ..Default::default()
     };
-    Artful::config(config_with_extra);
+    let artful_with_extra = Artful::with_config(config_with_extra)?;
 
-    // 获取全局配置
-    let global_config = Artful::get_config();
-    println!("HTTP timeout: {:?}", global_config.http.timeout);
-
-    // 获取扩展配置中的渠道信息
-    if let Some(alipay) = global_config.extra.get("alipay") {
-        println!("Alipay config: {}", alipay);
+    // 读取扩展配置中的渠道信息
+    if let Some(alipay) = artful_with_extra.config().extra.get("alipay") {
+        println!("Alipay config: {alipay}");
     }
 
+    // 实例持有的 HTTP 客户端可直接使用
+    println!("client ready: {:?}", artful.client());
+
     println!("Config initialized successfully!");
+
+    Ok(())
 }

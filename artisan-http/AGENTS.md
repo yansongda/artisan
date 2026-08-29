@@ -14,7 +14,7 @@
 # Build & check
 cargo check -p artisan-http --all-features
 
-# Test (59 tests)
+# Test
 cargo test -p artisan-http --all-features
 
 # Format & lint
@@ -34,31 +34,33 @@ cargo run -p artisan-http --example direction
 ```
 src/
 ├── lib.rs           # Public API exports
-├── artisan.rs       # Artful struct (config, artful, shortcut, raw methods)
-├── rocket.rs        # Rocket + RocketConfig + HttpOptions
+├── artful.rs        # Artful struct (instance: new/with_config/with_client, artful, shortcut, raw)
+├── rocket.rs        # Rocket + RocketConfig + ClientOptions/RequestOptions
 ├── flow_ctrl.rs     # FlowCtrl + Next (onion control)
 ├── plugin.rs        # Plugin trait (async_trait)
 ├── plugins/         # Built-in plugins
 │   ├── start.rs     # StartPlugin (init payload)
-│   ├── add_radar.rs # AddRadarPlugin (build Request)
+│   ├── add_radar.rs # AddRadarPlugin (build Request, fallback CT header)
 │   ├── parser.rs    # ParserPlugin (execute + parse)
 │   └── add_payload_body.rs
 ├── direction.rs     # Direction trait + DirectionKind + Destination
 ├── directions/      # Built-in parsers (JsonDirection)
-├── packer.rs        # Packer trait
+├── packer.rs        # Packer trait (pack/unpack/content_type)
 ├── packers/         # Built-in serializers (JsonPacker)
 ├── shortcut.rs      # Shortcut trait
-├── config.rs        # Config (global)
-├── error.rs         # ArtfulError enum (thiserror)
-└── http.rs          # Global Client singleton (OnceLock)
+├── config.rs        # Config (http: ClientOptions + extra)
+├── error.rs         # ArtfulError enum (thiserror, English Display)
+└── http.rs          # build_client / default_client (pub(crate))
 ```
 
 ## Key Types
 
 | Type | Role | File |
 |------|------|------|
-| `Artful` | Main entry point | `src/artisan.rs` |
+| `Artful` | Main entry point (instance type) | `src/artful.rs` |
 | `Rocket` | Request/response carrier | `src/rocket.rs` |
+| `ClientOptions` | Client-level HTTP options | `src/rocket.rs` |
+| `RequestOptions` | Request-level HTTP options (timeout only) | `src/rocket.rs` |
 | `Plugin` | Middleware trait | `src/plugin.rs` |
 | `FlowCtrl` | Execution controller | `src/flow_ctrl.rs` |
 | `Next` | Chain continuation | `src/flow_ctrl.rs` |
@@ -85,27 +87,27 @@ impl Plugin for MyPlugin {
 }
 ```
 
-### HTTP Client Singleton
+### Artful Instance & Client
 
-Global `reqwest::Client` via `OnceLock` in `src/http.rs`. Connection pool shared across all requests.
+`Artful` is an instance type: config and `reqwest::Client` are resolved at construction (`Artful::new()` / `Artful::with_config(config)`, fail-fast via `build_client`; `Artful::with_builder(config, customize)` applies `config.http` first, then the callback layers extras — later setters win; `Artful::with_client(config, client)` adopts an externally built client — `config.http` does not apply to it, recorded only). `rocket.client` is injected per request. App layer can wrap an instance in `std::sync::LazyLock` for a global singleton (see README). Client-level options live in `ClientOptions` (`Config.http`); request-level options in `RequestOptions` (`RocketConfig.http`, timeout only).
 
 ### Error Handling
 
-- `ArtfulError` uses `thiserror` with `#[source]` for error chains
+- `ArtfulError` uses `thiserror` with English Display messages
 - `JsonDeserializeError` requires `source: Option<serde_json::Error>`
-- `InvalidUrl` uses `source: reqwest::Error` (not String)
+- `RequestBuildError`/`ClientBuildError` use `source: reqwest::Error`; `ClientBuildError` must use explicit `#[source]` (`#[from]` is taken by `RequestFailed`)
 
 ### Shortcut Trait
 
 ```rust
-pub trait Shortcut: Default {  // Default bound required
+pub trait Shortcut {  // no Default bound required
     fn get_plugins(&self, params: &HashMap<String, Value>) -> Vec<Arc<dyn Plugin>>;
 }
 ```
 
 ## Testing
 
-- 59 tests across 7 files
+- Tests across 7 files
 - Use `wiremock` for HTTP mocking in integration tests
 - `#[tokio::test]` for async tests
 - Tests in `tests/` directory, not inline
@@ -114,11 +116,11 @@ pub trait Shortcut: Default {  // Default bound required
 
 | File | Coverage |
 |------|----------|
-| `artful_test.rs` | Artful methods, HTTP errors, plugin error propagation |
+| `artful_test.rs` | Artful methods, instance accessors, HTTP errors, plugin error propagation |
 | `direction_test.rs` | DirectionKind, Destination, custom Direction |
-| `flow_ctrl_test.rs` | FlowCtrl::cease, skip_rest, empty chain |
-| `rocket_test.rs` | Rocket convenience methods, RocketConfig |
-| `integration_test.rs` | Full pipeline tests |
+| `flow_ctrl_test.rs` | FlowCtrl::skip_rest, empty chain |
+| `rocket_test.rs` | Rocket convenience methods, RocketConfig, ClientOptions/RequestOptions |
+| `integration_test.rs` | Full pipeline, Content-Type auto-header, client timeout |
 | `packer_test.rs` | JsonPacker pack/unpack |
 | `shortcut_test.rs` | Shortcut trait |
 

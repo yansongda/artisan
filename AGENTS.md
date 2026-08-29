@@ -17,7 +17,7 @@ artisan/                    # Root package (facade)
 └── artisan-http/           # HTTP implementation crate
     ├── Cargo.toml
     ├── src/                # All implementation code
-    ├── tests/              # All tests (59 tests)
+    ├── tests/              # All tests
     └── examples/           # All examples
 ```
 
@@ -64,7 +64,7 @@ artisan-http = "~X.Y.Z"
 # Build & check (workspace)
 cargo check --workspace --all-features
 
-# Test (59 tests)
+# Test
 cargo test --workspace --all-features
 
 # Format & lint
@@ -90,9 +90,13 @@ cargo clippy --workspace -- -D warnings # Lint check
 cargo test --workspace --all-features   # All tests
 ```
 
+## README Bilingual Policy
+
+`README.md` (English, default) and `README.zh-CN.md` (Chinese) exist as a pair in both the repo root and `artisan-http/`. When changing either one, update its counterpart in the same change so the two stay in sync.
+
 ## References
 
 - **Implementation details**: [artisan-http/AGENTS.md](artisan-http/AGENTS.md)
-- Architecture: `docs/ARCHITECTURE.md` (comprehensive)
+- Architecture: `artisan-http/docs/ARCHITECTURE.md` (comprehensive)
 - Examples: `artisan-http/examples/*.rs` (5 working demos)
 - CI: `.github/workflows/coding-linter.yml`, `.github/workflows/publish.yml`

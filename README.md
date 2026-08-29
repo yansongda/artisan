@@ -1,61 +1,63 @@
+English | [简体中文](./README.zh-CN.md)
+
 # Artisan
 
-## Workspace 结构
+## Workspace Structure
 
 ```
 artisan/
-├── Cargo.toml              # Workspace 配置
-├── src/lib.rs              # Facade（Feature 控制的 re-export）
-└── artisan-http/           # HTTP 实现
-    ├── src/                # 核心实现
-    ├── tests/              # 测试（59 个）
-    ├── examples/           # 示例
-    └── docs/               # 架构文档
+├── Cargo.toml              # Workspace configuration
+├── src/lib.rs              # Facade (feature-controlled re-exports)
+└── artisan-http/           # HTTP implementation
+    ├── src/                # Core implementation
+    ├── tests/              # Tests
+    ├── examples/           # Examples
+    └── docs/               # Architecture docs
 ```
 
-## Crate 说明
+## Crates
 
-| Crate | 职责 | 文档 |
+| Crate | Role | Docs |
 |-------|------|------|
-| [`artisan`](.) | Facade，Feature 控制的 re-export | [docs.rs/artisan](https://docs.rs/artisan) |
-| [`artisan-http`](./artisan-http) | HTTP 客户端、洋葱模型、插件系统 | [README](./artisan-http/README.md) |
+| [`artisan`](.) | Facade with feature-controlled re-exports | [docs.rs/artisan](https://docs.rs/artisan) |
+| [`artisan-http`](./artisan-http) | HTTP client, onion model, plugin system | [README](./artisan-http/README.md#quick-start) |
 
-## 安装
+## Installation
 
 ```bash
-# 推荐：通过 facade（默认包含 HTTP 功能）
+# Recommended: via the facade (HTTP included by default)
 cargo add artisan
 
-# 直接依赖实现层
+# Depend on the implementation crate directly
 cargo add artisan-http
 
-# 纯 facade（禁用 HTTP 功能）
+# Pure facade (HTTP disabled)
 cargo add artisan --no-default-features
 ```
 
 ```toml
 # Cargo.toml
 [dependencies]
-artisan = "~0.13.1"
+artisan = "~0.14.0"
 
-# 直接依赖实现层
+# Depend on the implementation crate directly
 [dependencies]
-artisan-http = "~0.13.1"
+artisan-http = "~0.14.0"
 
-# 纯 facade（禁用 HTTP 功能）
+# Pure facade (HTTP disabled)
 [dependencies]
-artisan = { version = "~0.13.1", default-features = false }
+artisan = { version = "~0.14.0", default-features = false }
 ```
 
-## 快速入口
+## Quick Start
 
 ### artisan-http
 
-- **快速开始**: [README](./artisan-http/README.md#快速开始)
-- **架构设计**: [docs/ARCHITECTURE.md](./artisan-http/docs/ARCHITECTURE.md)
-- **示例代码**: [examples/](./artisan-http/examples/)
+- **Getting started**: [README](./artisan-http/README.md#quick-start)
+- **Architecture design**: [docs/ARCHITECTURE.md](./artisan-http/docs/ARCHITECTURE.md)
+- **Examples**: [examples/](./artisan-http/examples/)
 
-## 示例
+## Examples
 
 ### artisan-http
 
@@ -67,6 +69,6 @@ cargo run -p artisan-http --example custom_plugin
 cargo run -p artisan-http --example direction
 ```
 
-## 许可证
+## License
 
 MIT License

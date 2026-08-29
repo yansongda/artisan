@@ -2,7 +2,7 @@ use artisan_http::FlowCtrl;
 use artisan_http::Rocket;
 use artisan_http::direction::{Destination, DirectionKind};
 use artisan_http::plugins::{AddRadarPlugin, ParserPlugin, StartPlugin};
-use artisan_http::{Artful, ArtfulError, Plugin, flow_ctrl::Next};
+use artisan_http::{Artful, ArtfulError, ClientOptions, Config, Plugin, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -46,7 +46,8 @@ async fn test_artisan_basic() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(HashMap::new(), plugins).await.unwrap();
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
     assert!(matches!(result, Destination::Json(_)));
 }
@@ -74,23 +75,103 @@ async fn test_artisan_with_response_direction() {
     assert!(matches!(rocket.destination, Some(Destination::Response(_))));
 }
 
-// ============ Artful::config 相关测试 ============
+// ============ Artful 实例配置测试 ============
 
 #[test]
-fn test_artful_get_config_default() {
-    // get_config 在未设置时返回默认配置
-    let config = Artful::get_config();
-    assert!(config.extra.is_empty());
+fn test_artful_config_default() {
+    // new() 使用默认配置，config() 返回构造时配置
+    let artful = Artful::new().unwrap();
+    assert!(artful.config().extra.is_empty());
+    assert!(artful.config().http.timeout.is_none());
 }
 
 #[test]
-fn test_artful_has_config() {
-    // 注意：OnceLock 设置后无法更改，此测试可能在其他测试之后运行
-    // 因此只测试返回值类型正确，不测试具体值
-    let _has_config = Artful::has_config();
+fn test_artful_config_roundtrip() {
+    // with_config 保存的配置可经 config() 完整读回
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(30),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let artful = Artful::with_config(config).unwrap();
+    assert_eq!(artful.config().http.timeout, Some(30));
 }
 
-// ============ Artful::raw 测试 ============
+#[tokio::test]
+async fn test_artful_with_client_takes_effect() {
+    let mock_server = MockServer::start().await;
+
+    // with_client 注入的自定义 client 应贯穿 Artful 链路：
+    // 自定义 User-Agent（ClientOptions 之外的 client 级能力）应透传到发出的请求
+    Mock::given(method("GET"))
+        .and(path("/with-client"))
+        .and(header("user-agent", "custom-agent/7.7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(30),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let custom_client = reqwest::Client::builder()
+        .user_agent("custom-agent/7.7")
+        .build()
+        .unwrap();
+    let artful = Artful::with_client(config, custom_client);
+
+    // config() 读回构造时传入的配置（注意：config.http 不作用于注入的 client）
+    assert_eq!(artful.config().http.timeout, Some(30));
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/with-client",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+
+    assert!(matches!(result, Destination::Json(_)));
+}
+
+#[test]
+fn test_artful_new_and_accessors() {
+    // 成功路径：with_config 保存配置并构建 client
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(10),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let artful = Artful::with_config(config).unwrap();
+    assert_eq!(artful.config().http.timeout, Some(10));
+    let _client: &reqwest::Client = artful.client();
+
+    // 默认构造路径
+    let artful = Artful::new().unwrap();
+    assert!(artful.config().extra.is_empty());
+
+    // 失败路径：非法 user_agent 导致 client 构建失败 → ClientBuildError
+    let bad = Config {
+        http: ClientOptions {
+            user_agent: Some("bad\nua".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let err = Artful::with_config(bad).unwrap_err();
+    assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
+}
+
+// ============ Artful raw 方法测试 ============
 
 #[tokio::test]
 async fn test_artful_raw_success() {
@@ -102,10 +183,14 @@ async fn test_artful_raw_success() {
         .mount(&mock_server)
         .await;
 
-    let client = artisan_http::get_client();
-    let request = client.get(mock_server.uri() + "/raw-test").build().unwrap();
+    let artful = Artful::new().unwrap();
+    let request = artful
+        .client()
+        .get(mock_server.uri() + "/raw-test")
+        .build()
+        .unwrap();
 
-    let response = Artful::raw(request).await.unwrap();
+    let response = artful.raw(request).await.unwrap();
     assert_eq!(response.status(), 200);
 }
 
@@ -120,14 +205,15 @@ async fn test_artful_raw_with_headers() {
         .mount(&mock_server)
         .await;
 
-    let client = artisan_http::get_client();
-    let request = client
+    let artful = Artful::new().unwrap();
+    let request = artful
+        .client()
         .post(mock_server.uri() + "/headers-test")
         .header("X-Custom", "test-value")
         .build()
         .unwrap();
 
-    let response = Artful::raw(request).await.unwrap();
+    let response = artful.raw(request).await.unwrap();
     assert_eq!(response.status(), 200);
 }
 
@@ -172,7 +258,8 @@ async fn test_plugin_error_propagation() {
         Arc::new(SuccessPlugin), // 这个插件不会执行
     ];
 
-    let result = Artful::artful(HashMap::new(), plugins).await;
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(HashMap::new(), plugins).await;
 
     assert!(result.is_err());
     let error = result.unwrap_err();
@@ -251,7 +338,8 @@ async fn test_http_404_response() {
     ];
 
     // 404 不会返回错误，而是正常解析响应
-    let result = Artful::artful(HashMap::new(), plugins).await.unwrap();
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
     if let Destination::Json(json) = result {
         assert_eq!(json["error"], "Not Found");
@@ -283,7 +371,8 @@ async fn test_http_500_response() {
     ];
 
     // 500 不会返回错误，而是正常解析响应
-    let result = Artful::artful(HashMap::new(), plugins).await.unwrap();
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
     if let Destination::Json(json) = result {
         assert_eq!(json["error"], "Internal Server Error");
@@ -329,7 +418,8 @@ async fn test_http_timeout_response() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(HashMap::new(), plugins).await;
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(HashMap::new(), plugins).await;
 
     // 请求应该超时失败
     assert!(result.is_err());
@@ -350,7 +440,8 @@ async fn test_http_invalid_url() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(HashMap::new(), plugins).await;
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(HashMap::new(), plugins).await;
 
     assert!(result.is_err());
 }
@@ -367,7 +458,101 @@ async fn test_http_nonexistent_host() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(HashMap::new(), plugins).await;
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(HashMap::new(), plugins).await;
 
     assert!(result.is_err());
+}
+
+// ============ Artful::with_builder 测试 ============
+
+#[tokio::test]
+async fn with_builder_applies_config_http() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/slow-builder"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // 空回调：with_builder 等价于 with_config，config.http.timeout 生效
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(1),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let artful = Artful::with_builder(config, |builder| builder).unwrap();
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/slow-builder",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await;
+
+    assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
+}
+
+#[tokio::test]
+async fn with_builder_customization_overrides() {
+    let mock_server = MockServer::start().await;
+
+    // 回调叠加生效：自定义 UA 覆盖框架默认 UA
+    Mock::given(method("GET"))
+        .and(path("/customized"))
+        .and(header("user-agent", "custom-agent/7.7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(30),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let artful =
+        Artful::with_builder(config, |builder| builder.user_agent("custom-agent/7.7")).unwrap();
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/customized",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+
+    assert!(matches!(result, artisan_http::Destination::Json(_)));
+}
+
+#[test]
+fn with_builder_build_error_propagates() {
+    // 回调叠加后仍不合法 → ClientBuildError
+    let config = Config {
+        http: ClientOptions {
+            user_agent: Some("bad\nua".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let err = Artful::with_builder(config, |builder| builder).unwrap_err();
+
+    assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
 }

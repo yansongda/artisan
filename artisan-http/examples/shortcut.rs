@@ -61,18 +61,20 @@ impl Shortcut for HttpbinGetShortcut {
 
 #[tokio::main]
 async fn main() -> artisan_http::Result<()> {
+    let artful = Artful::new()?;
+
     // 使用 POST 快捷方式
     let mut params = HashMap::new();
     params.insert("data".to_string(), json!("hello world"));
 
-    let result = Artful::shortcut(HttpbinPostShortcut::default(), params).await?;
+    let result = artful.shortcut(HttpbinPostShortcut, params).await?;
 
     if let artisan_http::Destination::Json(json) = result {
         println!("POST Response: {}", json);
     }
 
     // 使用 GET 快捷方式
-    let result = Artful::shortcut(HttpbinGetShortcut::default(), HashMap::new()).await?;
+    let result = artful.shortcut(HttpbinGetShortcut, HashMap::new()).await?;
 
     if let artisan_http::Destination::Json(json) = result {
         println!("GET Response: {}", json);

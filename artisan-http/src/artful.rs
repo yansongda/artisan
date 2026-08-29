@@ -4,58 +4,104 @@
 //!
 //! # 方法
 //!
-//! - [`Artful::config`] - 初始化框架全局配置
+//! - [`Artful::new`] - 以默认配置创建实例
+//! - [`Artful::with_config`] - 以指定配置创建实例（构造时构建 HTTP 客户端，fail-fast）
+//! - [`Artful::with_builder`] - 以指定配置与自定义构建流程创建实例（config.http 生效 + 回调叠加）
+//! - [`Artful::with_client`] - 以指定配置与外部构建的 HTTP 客户端创建实例
 //! - [`Artful::artful`] - 执行完整插件链
 //! - [`Artful::shortcut`] - 使用 Shortcut 快捷方式
 //! - [`Artful::raw`] - 直接 HTTP 请求（跳过插件）
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use serde_json::Value;
 
 use crate::Result;
 use crate::config::Config;
 use crate::direction::Destination;
+use crate::error::ArtfulError;
 use crate::flow_ctrl::FlowCtrl;
-use crate::http::get_client;
+use crate::http::build_builder;
 use crate::plugin::Plugin;
 use crate::rocket::Rocket;
 use crate::shortcut::Shortcut;
 
-/// 全局配置实例
-static GLOBAL_CONFIG: OnceLock<Config> = OnceLock::new();
-
 /// Artful 主类 - 框架入口
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Artful;
+///
+/// 实例类型：配置与 HTTP 客户端在构造时显式解析（fail-fast），
+/// 配置错误在构造期即暴露，支持多实例共存与测试隔离。
+/// 每个实例持有独立的连接池（多渠道场景池相互隔离）；
+/// `reqwest::Client` 内部为 `Arc`，[`Clone`] 廉价且共享连接池，
+/// 单实例场景可配合 `std::sync::LazyLock` 构建全局单例（参见 README）。
+#[derive(Debug, Clone)]
+pub struct Artful {
+    config: Config,
+    client: reqwest::Client,
+}
 
 impl Artful {
-    /// 初始化框架全局配置
+    /// 以默认配置创建实例
     ///
-    /// 首次调用时设置配置，后续调用返回 false（OnceLock 不支持覆盖）
+    /// # Errors
     ///
-    /// # 参数
-    ///
-    /// - `config`: 框架配置
-    ///
-    /// # 返回
-    ///
-    /// - `true`: 配置成功设置
-    /// - `false`: 配置已存在，无法覆盖
-    pub fn config(config: Config) -> bool {
-        GLOBAL_CONFIG.set(config).is_ok()
+    /// 返回错误当 HTTP 客户端构建失败。
+    pub fn new() -> Result<Self> {
+        Self::with_config(Config::default())
     }
 
-    /// 获取全局配置
-    pub fn get_config() -> &'static Config {
-        GLOBAL_CONFIG.get_or_init(Config::default)
+    /// 以指定配置创建实例
+    ///
+    /// 构造时即按 `config.http` 构建 HTTP 客户端，配置错误立即暴露。
+    ///
+    /// # Errors
+    ///
+    /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败。
+    pub fn with_config(config: Config) -> Result<Self> {
+        Self::with_builder(config, |builder| builder)
     }
 
-    /// 检查是否已初始化配置
-    pub fn has_config() -> bool {
-        GLOBAL_CONFIG.get().is_some()
+    /// 以指定配置与自定义构建流程创建实例
+    ///
+    /// 构建顺序：先由框架按 `config.http` 应用默认值（pool/UA/timeout/connect_timeout，
+    /// 未设置项使用框架默认），再交由 `customize` 回调叠加 `ClientOptions` 无法表达的
+    /// 能力——代理、TLS 客户端证书、cookie 会话、重定向策略等——最后构建。
+    /// 回调内后写的 setter 覆盖先写的值（reqwest 覆盖语义），如可覆盖框架默认 UA。
+    ///
+    /// # Errors
+    ///
+    /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败
+    /// （含回调叠加后仍不合法的情况，如非法 user_agent）。
+    pub fn with_builder(
+        config: Config,
+        customize: impl FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
+    ) -> Result<Self> {
+        let client = customize(build_builder(config.http.clone()))
+            .build()
+            .map_err(|source| ArtfulError::ClientBuildError { source })?;
+
+        Ok(Self { config, client })
+    }
+
+    /// 以指定配置与外部构建的 HTTP 客户端创建实例
+    ///
+    /// 适用于 [`crate::ClientOptions`] 无法表达的 client 级能力——代理、TLS 证书、
+    /// cookie 会话、重定向策略等——由调用方自行构建 [`reqwest::Client`] 后注入。
+    ///
+    /// 注意：传入的 client 原样生效，`config.http` 中的选项**不会**作用于它，
+    /// 仅作为配置记录（可经 [`Artful::config`] 读取）。
+    pub fn with_client(config: Config, client: reqwest::Client) -> Self {
+        Self { config, client }
+    }
+
+    /// 获取实例配置
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// 获取实例 HTTP 客户端
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
     }
 
     /// 执行插件链
@@ -72,10 +118,13 @@ impl Artful {
     /// - HTTP 请求失败
     /// - 响应解析失败
     pub async fn artful(
+        &self,
         params: HashMap<String, Value>,
         plugins: Vec<Arc<dyn Plugin>>,
     ) -> Result<Destination> {
         let mut rocket = Rocket::new(params);
+        rocket.client = self.client.clone();
+
         let mut ctrl = FlowCtrl::new(plugins);
 
         ctrl.call_next(&mut rocket).await?;
@@ -97,11 +146,12 @@ impl Artful {
     /// - HTTP 请求失败
     /// - 响应解析失败
     pub async fn shortcut<S: Shortcut>(
+        &self,
         shortcut: S,
         params: HashMap<String, Value>,
     ) -> Result<Destination> {
         let plugins = shortcut.get_plugins(&params);
-        Self::artful(params, plugins).await
+        self.artful(params, plugins).await
     }
 
     /// 直接调用 HTTP（跳过插件链）
@@ -109,10 +159,10 @@ impl Artful {
     /// # Errors
     ///
     /// 返回错误当 HTTP 请求失败。
-    pub async fn raw(request: reqwest::Request) -> Result<reqwest::Response> {
-        get_client()
+    pub async fn raw(&self, request: reqwest::Request) -> Result<reqwest::Response> {
+        self.client
             .execute(request)
             .await
-            .map_err(crate::error::ArtfulError::RequestFailed)
+            .map_err(ArtfulError::RequestFailed)
     }
 }

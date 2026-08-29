@@ -32,7 +32,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Run cargo check
-        run: cargo check --all-features
+        run: cargo check --workspace --all-features
 
   lint:
     name: Lint

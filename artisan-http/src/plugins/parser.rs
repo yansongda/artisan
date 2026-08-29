@@ -16,7 +16,6 @@ use crate::direction::{Destination, Direction, DirectionKind};
 use crate::directions::JsonDirection;
 use crate::error::ArtfulError;
 use crate::flow_ctrl::Next;
-use crate::http::get_client;
 use crate::plugin::Plugin;
 
 /// 解析响应插件
@@ -37,7 +36,8 @@ impl Plugin for ParserPlugin {
 
         // 发送 HTTP 请求
         rocket.destination_origin = Some(
-            get_client()
+            rocket
+                .client
                 .execute(rocket.radar.take().ok_or(ArtfulError::MissingRequest)?)
                 .await
                 .map_err(ArtfulError::RequestFailed)?,

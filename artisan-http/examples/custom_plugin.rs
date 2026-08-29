@@ -62,7 +62,8 @@ async fn main() -> artisan_http::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(params, plugins).await?;
+    let artful = Artful::new()?;
+    let result = artful.artful(params, plugins).await?;
 
     if let artisan_http::Destination::Json(json) = result {
         println!("Response: {}", json);
