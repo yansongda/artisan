@@ -44,7 +44,8 @@ impl Plugin for AddRadarPlugin {
         } else if !rocket.payload.is_empty() {
             let body = rocket.packer.pack(&rocket.payload)?;
 
-            if !rocket.config.headers.contains_key("Content-Type") {
+            // 判重按头名不区分大小写（该分支位于 headers 遍历之后，直接补到 request_builder）
+            if !rocket.has_header("Content-Type") {
                 if let Some(ct) = rocket.packer.content_type() {
                     request_builder = request_builder.header("Content-Type", ct);
                 }

@@ -29,12 +29,14 @@ impl Plugin for AddPayloadBodyPlugin {
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
             rocket.config.body = Some(rocket.packer.pack(&rocket.payload)?);
 
+            // 判重按头名不区分大小写，用户以任意大小写键显式设置的值都不覆盖
             if let Some(ct) = rocket.packer.content_type() {
-                rocket
-                    .config
-                    .headers
-                    .entry("Content-Type".to_string())
-                    .or_insert_with(|| ct.to_string());
+                if !rocket.has_header("Content-Type") {
+                    rocket
+                        .config
+                        .headers
+                        .insert("Content-Type".to_string(), ct.to_string());
+                }
             }
         }
 

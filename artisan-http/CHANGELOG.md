@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠️ 行为变更（升级必读）
 
-- **JSON 请求默认携带 `Content-Type: application/json`**：默认插件链（`AddPayloadBodyPlugin` 打包分支与 `AddRadarPlugin` fallback 打包分支）在请求头缺失 `Content-Type` 时按 `Packer::content_type()` 自动补头；用户显式设置的任何 `Content-Type` 永不覆盖。边界说明：`config.headers` 为 `HashMap`，键匹配区分大小写——若以小写 `content-type` 显式设置，框架会再补一个大写键头，reqwest append 语义下将重复发送两个 `Content-Type`，请统一使用 `Content-Type` 键名。
+- **JSON 请求默认携带 `Content-Type: application/json`**：默认插件链（`AddPayloadBodyPlugin` 打包分支与 `AddRadarPlugin` fallback 打包分支）在请求头缺失 `Content-Type` 时按 `Packer::content_type()` 自动补头；用户显式设置的任何 `Content-Type` 永不覆盖。判重按头名不区分大小写（RFC 9110）：无论以 `Content-Type` 还是小写 `content-type` 显式设置，均不会补出重复头。
 - **此前无效的全局配置开始生效**：`Config.http.timeout` / `connect_timeout` 原为死字段（构建 client 时被忽略），本版本起真正接线。升级后请复核已配置的超时取值，原依赖"配置无效"行为的请求可能出现超时。
 
 ### Added
@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **BREAKING**: `HttpOptions` 拆分为 `ClientOptions`（client 级：`timeout` / `connect_timeout` / `pool_idle_timeout` / `pool_max_idle_per_host` / `user_agent`，`user_agent` 由 `Option<&'static str>` 放宽为 `Option<String>`）与 `RequestOptions`（请求级，仅 `timeout`）；`Config.http` 为 `ClientOptions`，`RocketConfig.http` 为 `RequestOptions`，per-request 误设 pool 字段改为编译错误
-- **BREAKING**: `Artful` 由静态类 + `OnceLock` 全局配置改为实例类型，删除全部静态 API（`Artful::config()` / `Artful::get_config()` / `Artful::has_config()`）与 `GLOBAL_CONFIG`
+- **BREAKING**: `Artful` 由静态类 + `OnceLock` 全局配置改为实例类型，删除全部静态 API（`Artful::config()` / `Artful::get_config()` / `Artful::has_config()`）与 `GLOBAL_CONFIG`；原单元结构体上的 `Default`/`Copy` derive 随之移除，`Artful::default()`、unit 字面量 `Artful` 与按值 `Copy` 传递不再可用
 - **BREAKING**: 错误变体 `InvalidUrl` 更名 `RequestBuildError`，语义覆盖 `request_builder.build()` 全部失败而非仅 URL
 - **BREAKING**: `ArtfulError` 全部 Display 消息英文化（变体名不变，程序化匹配不受影响）
 

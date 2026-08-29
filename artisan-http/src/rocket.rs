@@ -174,6 +174,14 @@ impl Rocket {
         self.config.headers.insert(key.into(), value.into());
     }
 
+    /// 判断是否已设置指定请求头（头名不区分大小写，符合 RFC 9110 语义）
+    pub(crate) fn has_header(&self, name: &str) -> bool {
+        self.config
+            .headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case(name))
+    }
+
     /// 设置请求体
     pub fn set_body(&mut self, body: impl Into<String>) {
         self.config.body = Some(body.into());

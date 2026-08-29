@@ -629,11 +629,13 @@ impl Plugin for AddPayloadBodyPlugin {
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
             rocket.config.body = Some(rocket.packer.pack(&rocket.payload)?);
 
-            // 请求头缺失 Content-Type 时按 packer 声明补头（不覆盖用户显式设置）
+            // 请求头缺失 Content-Type 时按 packer 声明补头
+            // （判重按头名不区分大小写，不覆盖用户以任意大小写显式设置的值）
             if let Some(ct) = rocket.packer.content_type() {
-                rocket.config.headers
-                    .entry("Content-Type".to_string())
-                    .or_insert_with(|| ct.to_string());
+                if !rocket.has_header("Content-Type") {
+                    rocket.config.headers
+                        .insert("Content-Type".to_string(), ct.to_string());
+                }
             }
         }
         
@@ -662,13 +664,13 @@ impl Plugin for AddRadarPlugin {
         
         // 添加 body；body 未设置且 payload 非空时走 fallback 打包分支：
         // 缺失 Content-Type 时直接补到 request_builder
-        // （该分支位于 headers 遍历之后，写回 config.headers 不会再生效）
+        // （判重按头名不区分大小写；该分支位于 headers 遍历之后，写回 config.headers 不会再生效）
         if let Some(body) = &rocket.config.body {
             request_builder = request_builder.body(body.clone());
         } else if !rocket.payload.is_empty() {
             let body = rocket.packer.pack(&rocket.payload)?;
 
-            if !rocket.config.headers.contains_key("Content-Type") {
+            if !rocket.has_header("Content-Type") {
                 if let Some(ct) = rocket.packer.content_type() {
                     request_builder = request_builder.header("Content-Type", ct);
                 }
