@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠️ 行为变更（升级必读）
 
-- **JSON 请求默认携带 `Content-Type: application/json`**：默认插件链（`AddPayloadBodyPlugin` 打包分支与 `AddRadarPlugin` fallback 打包分支）在请求头缺失 `Content-Type` 时按 `Packer::content_type()` 自动补头；用户显式设置的任何 `Content-Type` 永不覆盖。判重按头名不区分大小写（RFC 9110）：无论以 `Content-Type` 还是小写 `content-type` 显式设置，均不会补出重复头。
+- **JSON 请求默认携带 `Content-Type: application/json`**：默认插件链（`AddPayloadBodyPlugin` 打包分支与 `AddRadarPlugin` fallback 打包分支）在请求头缺失 `Content-Type` 时按 `Packer::content_type()` 自动补头；用户显式设置的任何 `Content-Type` 永不覆盖。判重按头名不区分大小写（RFC 9110）：无论以 `Content-Type` 还是小写 `content-type` 显式设置，均不会补出重复头。注意：头存储（`config.headers`）区分大小写——若自行同时设置不同大小写的同名键（如 `Content-Type` 与 `content-type`），两者都会发送，请勿重复设置。
 - **此前无效的全局配置开始生效**：`Config.http.timeout` / `connect_timeout` 原为死字段（构建 client 时被忽略），本版本起真正接线。升级后请复核已配置的超时取值，原依赖"配置无效"行为的请求可能出现超时。
 
 ### Added

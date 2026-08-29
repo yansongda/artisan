@@ -62,7 +62,7 @@ pub use directions::JsonDirection;
 pub mod artful;
 pub mod config;
 pub mod flow_ctrl;
-pub mod http;
+mod http;
 pub mod packer;
 pub mod packers;
 pub mod plugin;
