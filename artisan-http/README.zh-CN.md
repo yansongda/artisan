@@ -1,20 +1,20 @@
-English | [简体中文](./README.zh-CN.md)
+[English](./README.md) | 简体中文
 
 # artisan-http
 
-> Api RequesT Framework U Like - The Rust API request framework you like
+> Api RequesT Framework U Like - 你喜欢的 Rust API 请求框架
 
-A Rust HTTP client framework based on the onion model, inspired by [yansongda/artful](https://github.com/yansongda/artful).
+基于洋葱模型的 Rust HTTP 客户端框架，灵感来自 [yansongda/artful](https://github.com/yansongda/artful)。
 
-## Features
+## 特性
 
-- 🔄 **Onion model**: requests pass through layer by layer, responses return layer by layer
-- 🔌 **Plugin-based**: every request is a composition of plugins, highly flexible and customizable
-- 🛡️ **Type safety**: Rust's type system keeps configuration and parameters type-safe
-- ⚡ **High performance**: instantiating `Artful` shares the `reqwest::Client` connection pool internally via `Arc`
-- 📦 **Automatic Content-Type**: JSON requests automatically carry `Content-Type: application/json` (only added when missing; user-set headers are never overwritten)
+- 🔄 **洋葱模型**: 请求层层穿透，响应层层返回
+- 🔌 **插件化**: 每个请求都是一个插件组合，高度灵活可定制
+- 🛡️ **类型安全**: Rust 类型系统确保配置和参数的类型安全
+- ⚡ **高性能**: 实例化 `Artful`，`reqwest::Client` 内部 `Arc` 共享连接池
+- 📦 **Content-Type 自动补头**: JSON 请求默认自动携带 `Content-Type: application/json`（仅缺失时补，用户显式设置不覆盖）
 
-## Installation
+## 安装
 
 ```bash
 cargo add artisan-http
@@ -25,9 +25,9 @@ cargo add artisan-http
 artisan-http = "~0.14.0"
 ```
 
-## Quick Start
+## 快速开始
 
-### Basic Usage
+### 基础使用
 
 ```rust
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
@@ -80,7 +80,7 @@ async fn main() -> artisan_http::Result<()> {
 }
 ```
 
-### Using Shortcuts
+### 使用 Shortcut 快捷方式
 
 ```rust
 use artisan_http::{Artful, Shortcut, Plugin};
@@ -119,9 +119,9 @@ let artful = Artful::new()?;
 let result = artful.shortcut(shortcut, HashMap::new()).await?;
 ```
 
-### Global Singleton (LazyLock)
+### 全局单例（LazyLock）
 
-`Artful` is an instance type (the `reqwest::Client` is wrapped in an `Arc` internally, so `Clone` is cheap and shares the connection pool). At the application layer, prefer building a global singleton with `std::sync::LazyLock`, initialized on first access (where environment variables can be read):
+`Artful` 是实例类型（`reqwest::Client` 内部 `Arc`，`Clone` 廉价且共享连接池）。应用层推荐用 `std::sync::LazyLock` 构建全局单例，首访时初始化（可读环境变量）：
 
 ```rust
 use std::sync::LazyLock;
@@ -130,33 +130,32 @@ static ARTFUL: LazyLock<Artful> = LazyLock::new(|| {
     Artful::with_config(load_config()).expect("failed to build Artful client")
 });
 
-// Zero-panic variant (ArtfulError is not Clone; call sites need map_err to transfer ownership)
+// 零 panic 变体（ArtfulError 非 Clone，调用点需 map_err 转移错误所有权）
 static ARTFUL: LazyLock<Result<Artful, ArtfulError>> =
     LazyLock::new(|| Artful::with_config(load_config()));
-// At the call site:
+// 调用点：
 // let artful = ARTFUL.as_ref().map_err(|e| ArtfulError::Other(format!("Artful init failed: {e}")))?;
 
-// Multiple instances: one static per channel, independent connection pools
+// 多实例：不同渠道各一个 static，连接池独立
 static ALIPAY: LazyLock<Artful> = /* ... */;
 static WECHAT: LazyLock<Artful> = /* ... */;
 ```
 
-### Customizing the HTTP Client
+### 自定义 HTTP 客户端
 
-`ClientOptions` only covers the common options (timeout / connect_timeout / connection pool / User-Agent). Ordered from least to most client control, pick one of the three constructors as needed:
+`ClientOptions` 仅覆盖常用选项（timeout / connect_timeout / 连接池 / User-Agent）。按 client 控制权从低到高，三个构造函数按需选择：
 
 ```rust
-// ① with_builder (recommended): builds on top of config.http, with the callback layering on
-//    capabilities that ClientOptions cannot express;
-//    setters written later inside the callback override the framework defaults (e.g. overriding the default UA)
+// ① with_builder（推荐）：以 config.http 为基座，回调叠加 ClientOptions 表达不了的能力；
+//    回调内后写的 setter 覆盖框架默认值（如覆盖默认 UA）
 let artful = Artful::with_builder(config, |builder| {
     builder
         .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
         .cookie_store(true)
 })?;
 
-// ② with_client: inject an externally built client (use it to share a connection pool across Artful instances);
-//    config.http does not apply to the injected client and is kept only as a configuration record (readable via artful.config())
+// ② with_client：注入外部构建的 client（跨 Artful 实例共享连接池时使用）；
+//    config.http 不作用于注入的 client，仅作为配置记录（可经 artful.config() 读取）
 let custom = reqwest::Client::builder()
     .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
     .cookie_store(true)
@@ -166,9 +165,9 @@ let artful = Artful::with_client(Config::default(), custom);
 let result = artful.shortcut(MyApiShortcut, params).await?;
 ```
 
-For most scenarios, `Artful::new()` / `Artful::with_config(config)` is all you need (fully managed by the framework).
+绝大多数场景用 `Artful::new()` / `Artful::with_config(config)` 即可（框架全托管）。
 
-### Custom Plugins
+### 自定义插件
 
 ```rust
 use artisan_http::{Plugin, Rocket, flow_ctrl::Next};
@@ -191,31 +190,31 @@ impl Plugin for SignaturePlugin {
 }
 ```
 
-**Error handling**: plugins return `Result<()>`; any plugin failure aborts the whole chain and propagates the error.
+**错误处理**: 插件返回 `Result<()>`，任一插件失败会终止整个链并传播错误。
 
-## Core Concepts
+## 核心概念
 
-### Rocket - The Request Carrier
+### Rocket - 请求载体
 
-`Rocket` is the data carrier throughout the request lifecycle:
+`Rocket` 是整个请求生命周期中的数据载体：
 
 ```rust
 pub struct Rocket {
-    params: HashMap<String, Value>,   // raw params (immutable)
-    pub payload: HashMap<String, Value>, // business params (mutable)
-    pub config: RocketConfig,         // HTTP config (mutable)
-    pub radar: Option<Request>,       // the HTTP request object
-    pub destination: Option<Destination>, // parsed result
-    pub packer: Arc<dyn Packer>,      // serializer
+    params: HashMap<String, Value>,   // 原始参数（不变）
+    pub payload: HashMap<String, Value>, // 业务参数（可修改）
+    pub config: RocketConfig,         // HTTP 配置（可修改）
+    pub radar: Option<Request>,       // HTTP 请求对象
+    pub destination: Option<Destination>, // 解析结果
+    pub packer: Arc<dyn Packer>,      // 序列化器
 }
 ```
 
-**Design notes**:
-- `params`: the raw parameters passed in by the caller, unchanged throughout the lifecycle
-- `payload`: the business parameters, initialized from `params` by `StartPlugin`, modifiable by later plugins
-- `config`: the HTTP configuration, including `direction` (the response parsing strategy), set by plugins
+**设计说明**：
+- `params`: 原始参数，由调用方传入，整个生命周期中保持不变
+- `payload`: 业务参数，由 `StartPlugin` 从 `params` 初始化，后续插件可修改
+- `config`: HTTP 配置，包含 `direction`（响应解析策略），由插件负责设置
 
-### RocketConfig - Request Configuration
+### RocketConfig - 请求配置
 
 ```rust
 pub struct RocketConfig {
@@ -223,14 +222,14 @@ pub struct RocketConfig {
     pub url: String,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
-    pub http: RequestOptions,        // request-level options (timeout only)
-    pub direction: DirectionKind,     // response parsing strategy
+    pub http: RequestOptions,        // 请求级选项（仅 timeout）
+    pub direction: DirectionKind,     // 响应解析策略
 }
 ```
 
-### Plugin - The Onion Model
+### Plugin - 插件（洋葱模型）
 
-Plugins are the core of the onion model. Each plugin can perform operations in the forward (before) and backward (after) phases of a request:
+插件是洋葱模型的核心，每个插件可以在请求前向和后向阶段执行操作：
 
 ```rust
 #[async_trait]
@@ -239,36 +238,36 @@ pub trait Plugin: Send + Sync + 'static {
 }
 ```
 
-Execution flow:
+执行流程：
 ```
-Request  → Plugin1 forward → Plugin2 forward → Plugin3 forward → HTTP request
-Response ← Plugin1 backward ← Plugin2 backward ← Plugin3 backward ← HTTP response
+请求 → Plugin1 前向 → Plugin2 前向 → Plugin3 前向 → HTTP 请求
+响应 ← Plugin1 后向 ← Plugin2 后向 ← Plugin3 后向 ← HTTP 响应
 ```
 
-### Direction - Response Parsing Strategy
+### Direction - 响应解析策略
 
 ```rust
 pub enum DirectionKind {
-    Json,             // Parse as JSON (default)
-    Response,         // Return the raw Response
-    NoRequest,        // Do not send an HTTP request
-    Custom(Arc<dyn Direction>), // Custom parser
+    Json,             // 解析为 JSON（默认）
+    Response,         // 返回原始 Response
+    NoRequest,        // 不发起 HTTP 请求
+    Custom(Arc<dyn Direction>), // 自定义解析器
 }
 ```
 
-## Built-in Plugins
+## 内置插件
 
-| Plugin | Purpose |
-|--------|---------|
-| `StartPlugin` | Initializes `payload` from `params` |
-| `AddPayloadBodyPlugin` | Serializes the payload into the request body |
-| `AddRadarPlugin` | Builds the HTTP Request |
-| `ParserPlugin` | Sends the request and parses the response |
+| 插件 | 功能 |
+|------|------|
+| `StartPlugin` | 将 params 初始化到 payload |
+| `AddPayloadBodyPlugin` | 将 payload 序列化为请求体 |
+| `AddRadarPlugin` | 构建 HTTP Request |
+| `ParserPlugin` | 执行请求并解析响应 |
 
-## Examples
+## 示例
 
 ```bash
-# Run an example
+# 运行示例
 cargo run -p artisan-http --example basic
 cargo run -p artisan-http --example config
 cargo run -p artisan-http --example shortcut
@@ -276,18 +275,18 @@ cargo run -p artisan-http --example custom_plugin
 cargo run -p artisan-http --example direction
 ```
 
-## Testing
+## 测试
 
 ```bash
-# Run all tests
+# 运行所有测试
 cargo test -p artisan-http --all-features
 ```
 
-## Documentation
+## 文档
 
-- Architecture design in detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Project guide: [AGENTS.md](AGENTS.md)
+- 详细架构设计：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 项目说明：[AGENTS.md](AGENTS.md)
 
-## License
+## 许可证
 
 MIT License

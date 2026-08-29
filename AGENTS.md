@@ -90,6 +90,10 @@ cargo clippy --workspace -- -D warnings # Lint check
 cargo test --workspace --all-features   # All tests
 ```
 
+## README Bilingual Policy
+
+`README.md` (English, default) and `README.zh-CN.md` (Chinese) exist as a pair in both the repo root and `artisan-http/`. When changing either one, update its counterpart in the same change so the two stay in sync.
+
 ## References
 
 - **Implementation details**: [artisan-http/AGENTS.md](artisan-http/AGENTS.md)
