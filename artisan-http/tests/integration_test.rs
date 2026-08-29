@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use wiremock::matchers::{header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 struct MethodUrlPlugin {
     method: reqwest::Method,
@@ -294,5 +294,111 @@ async fn client_timeout_takes_effect() {
 
     let result = artful.artful(HashMap::new(), plugins).await;
 
+    assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
+}
+
+// ============ Content-Type 判重与 timeout 覆盖语义测试 ============
+
+/// 断言请求恰好携带一个 Content-Type 头（按头名聚合计数，不区分大小写）
+struct SingleContentTypeHeader;
+
+impl Match for SingleContentTypeHeader {
+    fn matches(&self, request: &Request) -> bool {
+        request.headers.get_all("content-type").iter().count() == 1
+    }
+}
+
+struct LowercaseContentTypePlugin;
+
+#[async_trait]
+impl Plugin for LowercaseContentTypePlugin {
+    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
+        // 小写键：判重若区分大小写，补头后会重复发送两个 Content-Type
+        rocket.add_header("content-type", "application/custom");
+        next.call(rocket).await
+    }
+}
+
+#[tokio::test]
+async fn lowercase_content_type_not_duplicated() {
+    let mock_server = MockServer::start().await;
+
+    // 恰好一个 CT 头，且值是用户显式设置的值
+    Mock::given(method("POST"))
+        .and(path("/ct-lowercase"))
+        .and(SingleContentTypeHeader)
+        .and(header("content-type", "application/custom"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(LowercaseContentTypePlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::POST,
+            url: mock_server.uri() + "/ct-lowercase",
+        }),
+        Arc::new(AddPayloadBodyPlugin),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let artful = Artful::new().unwrap();
+    let result = artful.artful(params, plugins).await.unwrap();
+
+    assert!(matches!(result, Destination::Json(_)));
+}
+
+#[tokio::test]
+async fn request_timeout_overrides_client_timeout() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/slow-override"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // client 级 5s 足以容纳 2s 延迟；请求级 1s 覆盖后应超时
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(5),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let artful = Artful::with_config(config).unwrap();
+
+    struct RequestTimeoutPlugin;
+
+    #[async_trait]
+    impl Plugin for RequestTimeoutPlugin {
+        async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
+            rocket.config.http.timeout = Some(1);
+            next.call(rocket).await
+        }
+    }
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(RequestTimeoutPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/slow-override",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await;
+
+    // 请求级 timeout=1s 覆盖 client 级 5s：若覆盖语义失效，请求 2s 后成功、断言失败
     assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
 }
