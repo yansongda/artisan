@@ -36,7 +36,7 @@
   │  推荐：static ARTFUL: LazyLock<Artful>（std 1.80+，MSRV 1.85 满足）
   ▼
 Artful::new() / Artful::with_config(config)      ← 唯一入口，构造时构建 client
-  │  self.client 注入                                （失败返回 ArtfulError::ClientBuild）
+  │  self.client 注入                                （失败返回 ArtfulError::ClientBuildError）
   ▼
 Rocket { params, payload, config, client, radar, destination_origin, destination, packer }
   │  client 由实例注入，插件不再直接依赖全局单例
@@ -58,7 +58,7 @@ artisan-http/src/
 │                         pub(crate) default_client（供直接构造 Rocket）
 ├── config.rs         [M] Config.http: HttpOptions → ClientOptions（import 同步替换）
 ├── artful.rs         [M] 整体重写：实例类型；删 GLOBAL_CONFIG 与全部静态方法
-├── error.rs          [M] Display 全英文；InvalidUrl → RequestBuildError；新增 ClientBuild
+├── error.rs          [M] Display 全英文；InvalidUrl → RequestBuildError；新增 ClientBuildError
 ├── flow_ctrl.rs      [M] 删 cease()
 ├── packer.rs         [M] 新增 content_type() 默认方法
 ├── packers/json.rs   [M] 覆写 content_type → "application/json"
@@ -119,7 +119,7 @@ pub struct Artful { config: Config, client: reqwest::Client }
 
 impl Artful {
     pub fn new() -> Result<Self>;                          // 默认配置
-    pub fn with_config(config: Config) -> Result<Self>;    // 构造即构建 client，失败 ClientBuild
+    pub fn with_config(config: Config) -> Result<Self>;    // 构造即构建 client，失败 ClientBuildError
     pub fn config(&self) -> &Config;
     pub fn client(&self) -> &reqwest::Client;
     pub async fn artful(&self, params, plugins) -> Result<Destination>;
@@ -153,7 +153,7 @@ fn content_type(&self) -> Option<&'static str> { Some("application/json") }
 
 - `ArtfulError` Display 全英文（`"HTTP request failed: {0}"` 等 11 个现有变体；改名与新增后共 12 个），变体名除下述外不变，程序化匹配不受影响。
 - `InvalidUrl` → `RequestBuildError { source: reqwest::Error }`，消息 `"failed to build HTTP request: {source}"`——涵盖 `build()` 全部失败而非仅 URL。
-- 新增 `ClientBuild { source: reqwest::Error }`，消息 `"failed to build HTTP client: {source}"`。**不可写 `#[from]`**：`reqwest::Error` 的 `#[from]` 已被 `RequestFailed` 占用，thiserror 重复 `#[from]` 会编译报错；`Artful::with_config` 中显式构造。
+- 新增 `ClientBuildError { source: reqwest::Error }`，消息 `"failed to build HTTP client: {source}"`。**不可写 `#[from]`**：`reqwest::Error` 的 `#[from]` 已被 `RequestFailed` 占用，thiserror 重复 `#[from]` 会编译报错；`Artful::with_config` 中显式构造。
 - 删 `FlowCtrl::cease()`（与 `skip_rest()` 逐行相同）；`flow_ctrl_test.rs` 对应用例改用 `skip_rest`。
 - `StartPlugin`：`rocket.merge_payload(rocket.get_params().clone())` → `rocket.merge_params_to_payload()`（rocket.rs 新方法，内部直接字段访问 `self.params.iter()` + `self.payload.insert`，借用检查器允许字段级 disjoint borrow；省一个中间 HashMap 分配）。原 `merge_payload(HashMap)` 删除（src 唯一调用方是 StartPlugin；`tests/rocket_test.rs::test_rocket_merge_payload` 的直接调用随测试迁移改写为 `merge_params_to_payload` 断言）。
 
