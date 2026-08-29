@@ -463,3 +463,96 @@ async fn test_http_nonexistent_host() {
 
     assert!(result.is_err());
 }
+
+// ============ Artful::with_builder 测试 ============
+
+#[tokio::test]
+async fn with_builder_applies_config_http() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/slow-builder"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // 空回调：with_builder 等价于 with_config，config.http.timeout 生效
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(1),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let artful = Artful::with_builder(config, |builder| builder).unwrap();
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/slow-builder",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await;
+
+    assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
+}
+
+#[tokio::test]
+async fn with_builder_customization_overrides() {
+    let mock_server = MockServer::start().await;
+
+    // 回调叠加生效：自定义 UA 覆盖框架默认 UA
+    Mock::given(method("GET"))
+        .and(path("/customized"))
+        .and(header("user-agent", "custom-agent/7.7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(30),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let artful =
+        Artful::with_builder(config, |builder| builder.user_agent("custom-agent/7.7")).unwrap();
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/customized",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+
+    assert!(matches!(result, artisan_http::Destination::Json(_)));
+}
+
+#[test]
+fn with_builder_build_error_propagates() {
+    // 回调叠加后仍不合法 → ClientBuildError
+    let config = Config {
+        http: ClientOptions {
+            user_agent: Some("bad\nua".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let err = Artful::with_builder(config, |builder| builder).unwrap_err();
+
+    assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
+}

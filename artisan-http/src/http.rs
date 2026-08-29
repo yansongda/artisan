@@ -31,8 +31,12 @@ pub(crate) fn default_client() -> &'static reqwest::Client {
     })
 }
 
-/// 按 [`ClientOptions`] 构建 HTTP 客户端（消费全部字段）
-pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, reqwest::Error> {
+/// 按 [`ClientOptions`] 配置 `reqwest::ClientBuilder`（消费全部字段，不构建）
+///
+/// 框架默认值兜底：pool_idle_timeout=90s、pool_max_idle_per_host=20、
+/// UA=`yansongda/artisan-http:{version}`；未设置的 timeout/connect_timeout
+/// 保持 reqwest 默认（无超时）。
+pub(crate) fn build_builder(options: ClientOptions) -> reqwest::ClientBuilder {
     let pool_idle_timeout = options
         .pool_idle_timeout
         .unwrap_or(DEFAULT_POOL_IDLE_TIMEOUT);
@@ -56,7 +60,12 @@ pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, re
         builder = builder.connect_timeout(Duration::from_secs(secs));
     }
 
-    builder.build()
+    builder
+}
+
+/// 按 [`ClientOptions`] 构建 HTTP 客户端（消费全部字段）
+pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, reqwest::Error> {
+    build_builder(options).build()
 }
 
 fn fallback_client() -> reqwest::Client {

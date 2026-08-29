@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `Artful` 实例类型：`new()` / `with_config(Config)`（构造时构建 client，fail-fast 返回 `ClientBuildError`）/ `config()` / `client()` / `artful()` / `shortcut()` / `raw()`；配合 `std::sync::LazyLock` 可构建全局单例或多实例
-- `Artful::with_client(config, client)`：注入外部构建的 `reqwest::Client`，支持 `ClientOptions` 无法表达的 client 级能力（代理、TLS 证书、cookie 会话、重定向策略等）；注入的 client 原样生效，`config.http` 不作用于它，仅作为配置记录
+- `Artful::with_builder(config, customize)`：以 `config.http` 为基座（框架默认值兜底）、经回调叠加 `reqwest::ClientBuilder` 能力（代理、TLS 证书、cookie 会话、重定向策略等）后构建；回调内后写的 setter 覆盖先写值
+- `Artful::with_client(config, client)`：注入外部构建的 `reqwest::Client`（跨实例共享连接池、client 在别处构建的场景）；注入的 client 原样生效，`config.http` 不作用于它，仅作为配置记录——参与构建流程的定制请用 `with_builder`
 - `Packer::content_type()` 默认方法（默认返回 `None`），`JsonPacker` 返回 `Some("application/json")`，自定义 Packer 声明自己的 MIME 即自动生效
 - 错误变体 `ClientBuildError { source: reqwest::Error }`（与 `RequestBuildError` 命名对齐）
 

@@ -141,18 +141,29 @@ static WECHAT: LazyLock<Artful> = /* ... */;
 
 ### 自定义 HTTP 客户端
 
-`ClientOptions` 仅覆盖常用选项（timeout / connect_timeout / 连接池 / User-Agent）。需要代理、TLS 证书、cookie 会话等能力时，自行构建 `reqwest::Client` 后用 `Artful::with_client` 注入，链路中的所有请求都会使用该 client：
+`ClientOptions` 仅覆盖常用选项（timeout / connect_timeout / 连接池 / User-Agent）。按 client 控制权从低到高，三个构造函数按需选择：
 
 ```rust
+// ① with_builder（推荐）：以 config.http 为基座，回调叠加 ClientOptions 表达不了的能力；
+//    回调内后写的 setter 覆盖框架默认值（如覆盖默认 UA）
+let artful = Artful::with_builder(config, |builder| {
+    builder
+        .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
+        .cookie_store(true)
+})?;
+
+// ② with_client：注入外部构建的 client（跨 Artful 实例共享连接池时使用）；
+//    config.http 不作用于注入的 client，仅作为配置记录（可经 artful.config() 读取）
 let custom = reqwest::Client::builder()
     .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
     .cookie_store(true)
     .build()?;
-
-// config.http 不作用于注入的 client，仅作为配置记录（可经 artful.config() 读取）
 let artful = Artful::with_client(Config::default(), custom);
+
 let result = artful.shortcut(MyApiShortcut, params).await?;
 ```
+
+绝大多数场景用 `Artful::new()` / `Artful::with_config(config)` 即可（框架全托管）。
 
 ### 自定义插件
 

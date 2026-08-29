@@ -6,6 +6,7 @@
 //!
 //! - [`Artful::new`] - 以默认配置创建实例
 //! - [`Artful::with_config`] - 以指定配置创建实例（构造时构建 HTTP 客户端，fail-fast）
+//! - [`Artful::with_builder`] - 以指定配置与自定义构建流程创建实例（config.http 生效 + 回调叠加）
 //! - [`Artful::with_client`] - 以指定配置与外部构建的 HTTP 客户端创建实例
 //! - [`Artful::artful`] - 执行完整插件链
 //! - [`Artful::shortcut`] - 使用 Shortcut 快捷方式
@@ -21,7 +22,7 @@ use crate::config::Config;
 use crate::direction::Destination;
 use crate::error::ArtfulError;
 use crate::flow_ctrl::FlowCtrl;
-use crate::http::build_client;
+use crate::http::build_builder;
 use crate::plugin::Plugin;
 use crate::rocket::Rocket;
 use crate::shortcut::Shortcut;
@@ -56,7 +57,26 @@ impl Artful {
     ///
     /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败。
     pub fn with_config(config: Config) -> Result<Self> {
-        let client = build_client(config.http.clone())
+        Self::with_builder(config, |builder| builder)
+    }
+
+    /// 以指定配置与自定义构建流程创建实例
+    ///
+    /// 构建顺序：先由框架按 `config.http` 应用默认值（pool/UA/timeout/connect_timeout，
+    /// 未设置项使用框架默认），再交由 `customize` 回调叠加 `ClientOptions` 无法表达的
+    /// 能力——代理、TLS 客户端证书、cookie 会话、重定向策略等——最后构建。
+    /// 回调内后写的 setter 覆盖先写的值（reqwest 覆盖语义），如可覆盖框架默认 UA。
+    ///
+    /// # Errors
+    ///
+    /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败
+    /// （含回调叠加后仍不合法的情况，如非法 user_agent）。
+    pub fn with_builder(
+        config: Config,
+        customize: impl FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
+    ) -> Result<Self> {
+        let client = customize(build_builder(config.http.clone()))
+            .build()
             .map_err(|source| ArtfulError::ClientBuildError { source })?;
 
         Ok(Self { config, client })

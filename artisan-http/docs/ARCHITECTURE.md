@@ -439,6 +439,13 @@ impl Artful {
     /// 以指定配置创建实例（构造时构建 client，失败返回 ClientBuildError）
     pub fn with_config(config: Config) -> Result<Self>;
 
+    /// 以指定配置与自定义构建流程创建实例
+    /// （先按 config.http 应用框架默认值，回调叠加，后写 setter 覆盖先写值）
+    pub fn with_builder(
+        config: Config,
+        customize: impl FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
+    ) -> Result<Self>;
+
     /// 以指定配置与外部构建的 HTTP 客户端创建实例
     /// （config.http 不作用于注入的 client，仅作为配置记录）
     pub fn with_client(config: Config, client: reqwest::Client) -> Self;
@@ -772,6 +779,9 @@ let artful = Artful::new()?;
 // 或以自定义配置创建（构造时构建 client，fail-fast）
 let artful = Artful::with_config(config)?;
 
+// 需要 ClientOptions 表达不了的能力（代理/TLS 证书/cookie 会话等）时，回调叠加（config.http 仍生效）
+let artful = Artful::with_builder(config, |builder| builder.cookie_store(true))?;
+
 // 应用层全局单例推荐 LazyLock（见 §2.3）
 ```
 
@@ -1031,6 +1041,7 @@ wiremock = { version = "~0.6.5" }
 ### v0.14.0 - 实例化与配置治理（2026-08-29）
 
 - [x] `Artful` 由静态类 + `OnceLock` 全局配置改为实例类型（`new`/`with_config`，fail-fast）
+- [x] `Artful::with_builder`（config.http 基座 + 回调叠加）与 `Artful::with_client`（注入外部 client）自定义客户端入口
 - [x] `HttpOptions` 按 client/request 生命周期拆分为 `ClientOptions`/`RequestOptions`，消除全局 `timeout`/`connect_timeout` 死字段
 - [x] `Packer::content_type()` 自描述，默认链 JSON 请求自动补 `Content-Type`（仅缺失时补）
 - [x] 错误 Display 英文化；`InvalidUrl` → `RequestBuildError`；新增 `ClientBuildError`
