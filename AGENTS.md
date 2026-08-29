@@ -17,7 +17,7 @@ artisan/                    # Root package (facade)
 └── artisan-http/           # HTTP implementation crate
     ├── Cargo.toml
     ├── src/                # All implementation code
-    ├── tests/              # All tests (65 tests)
+    ├── tests/              # All tests (68 tests)
     └── examples/           # All examples
 ```
 
@@ -64,7 +64,7 @@ artisan-http = "~X.Y.Z"
 # Build & check (workspace)
 cargo check --workspace --all-features
 
-# Test (65 tests)
+# Test (68 tests)
 cargo test --workspace --all-features
 
 # Format & lint

@@ -6,6 +6,7 @@
 //!
 //! - [`Artful::new`] - 以默认配置创建实例
 //! - [`Artful::with_config`] - 以指定配置创建实例（构造时构建 HTTP 客户端，fail-fast）
+//! - [`Artful::with_client`] - 以指定配置与外部构建的 HTTP 客户端创建实例
 //! - [`Artful::artful`] - 执行完整插件链
 //! - [`Artful::shortcut`] - 使用 Shortcut 快捷方式
 //! - [`Artful::raw`] - 直接 HTTP 请求（跳过插件）
@@ -59,6 +60,17 @@ impl Artful {
             .map_err(|source| ArtfulError::ClientBuild { source })?;
 
         Ok(Self { config, client })
+    }
+
+    /// 以指定配置与外部构建的 HTTP 客户端创建实例
+    ///
+    /// 适用于 [`crate::ClientOptions`] 无法表达的 client 级能力——代理、TLS 证书、
+    /// cookie 会话、重定向策略等——由调用方自行构建 [`reqwest::Client`] 后注入。
+    ///
+    /// 注意：传入的 client 原样生效，`config.http` 中的选项**不会**作用于它，
+    /// 仅作为配置记录（可经 [`Artful::config`] 读取）。
+    pub fn with_client(config: Config, client: reqwest::Client) -> Self {
+        Self { config, client }
     }
 
     /// 获取实例配置

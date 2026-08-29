@@ -139,6 +139,21 @@ static ALIPAY: LazyLock<Artful> = /* ... */;
 static WECHAT: LazyLock<Artful> = /* ... */;
 ```
 
+### 自定义 HTTP 客户端
+
+`ClientOptions` 仅覆盖常用选项（timeout / connect_timeout / 连接池 / User-Agent）。需要代理、TLS 证书、cookie 会话等能力时，自行构建 `reqwest::Client` 后用 `Artful::with_client` 注入，链路中的所有请求都会使用该 client：
+
+```rust
+let custom = reqwest::Client::builder()
+    .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
+    .cookie_store(true)
+    .build()?;
+
+// config.http 不作用于注入的 client，仅作为配置记录（可经 artful.config() 读取）
+let artful = Artful::with_client(Config::default(), custom);
+let result = artful.shortcut(MyApiShortcut, params).await?;
+```
+
 ### 自定义插件
 
 ```rust
@@ -250,7 +265,7 @@ cargo run -p artisan-http --example direction
 ## 测试
 
 ```bash
-# 运行所有测试（65 个）
+# 运行所有测试（68 个）
 cargo test -p artisan-http --all-features
 ```
 

@@ -99,6 +99,48 @@ fn test_artful_config_roundtrip() {
     assert_eq!(artful.config().http.timeout, Some(30));
 }
 
+#[tokio::test]
+async fn test_artful_with_client_takes_effect() {
+    let mock_server = MockServer::start().await;
+
+    // with_client 注入的自定义 client 应贯穿 Artful 链路：
+    // 自定义 User-Agent（ClientOptions 之外的 client 级能力）应透传到发出的请求
+    Mock::given(method("GET"))
+        .and(path("/with-client"))
+        .and(header("user-agent", "custom-agent/7.7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let config = Config {
+        http: ClientOptions {
+            timeout: Some(30),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let custom_client = reqwest::Client::builder()
+        .user_agent("custom-agent/7.7")
+        .build()
+        .unwrap();
+    let artful = Artful::with_client(config, custom_client);
+
+    // config() 读回构造时传入的配置（注意：config.http 不作用于注入的 client）
+    assert_eq!(artful.config().http.timeout, Some(30));
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/with-client",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+
+    assert!(matches!(result, Destination::Json(_)));
+}
+
 #[test]
 fn test_artful_new_and_accessors() {
     // 成功路径：with_config 保存配置并构建 client

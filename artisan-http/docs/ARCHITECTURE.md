@@ -439,6 +439,10 @@ impl Artful {
     /// 以指定配置创建实例（构造时构建 client，失败返回 ClientBuild）
     pub fn with_config(config: Config) -> Result<Self>;
 
+    /// 以指定配置与外部构建的 HTTP 客户端创建实例
+    /// （config.http 不作用于注入的 client，仅作为配置记录）
+    pub fn with_client(config: Config, client: reqwest::Client) -> Self;
+
     /// 获取实例配置
     pub fn config(&self) -> &Config;
 
