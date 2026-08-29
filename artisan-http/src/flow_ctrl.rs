@@ -76,12 +76,6 @@ impl FlowCtrl {
         self.is_ceased = true;
     }
 
-    /// 终止并标记
-    pub fn cease(&mut self) {
-        self.is_ceased = true;
-        self.skip_rest();
-    }
-
     /// 检查是否已终止
     #[must_use]
     pub fn is_ceased(&self) -> bool {

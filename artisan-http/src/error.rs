@@ -2,6 +2,7 @@
 //!
 //! 定义框架中所有可能出现的错误类型，包括：
 //! - HTTP 请求错误（RequestFailed）
+//! - HTTP 客户端/请求构建错误（ClientBuild, `RequestBuildError`）
 //! - 序列化错误（JsonSerializeError, `JsonDeserializeError`)
 //! - 插件错误（PluginExecutionError）
 //! - 参数错误（MissingParameter, `InvalidParameter`)
@@ -12,26 +13,36 @@ use thiserror::Error;
 /// 框架错误类型
 #[derive(Debug, Error)]
 pub enum ArtfulError {
-    #[error("HTTP 请求失败: {0}")]
+    #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
 
-    #[error("无效的 URL: {source}")]
-    InvalidUrl {
+    /// HTTP 客户端构建失败
+    ///
+    /// 注意：`reqwest::Error` 的 `#[from]` 已被 [`ArtfulError::RequestFailed`]
+    /// 占用，此处须使用显式 `#[source]`。
+    #[error("failed to build HTTP client: {source}")]
+    ClientBuild {
         #[source]
         source: reqwest::Error,
     },
 
-    #[error("JSON 序列化失败: {0}")]
+    #[error("failed to build HTTP request: {source}")]
+    RequestBuildError {
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[error("failed to serialize JSON: {0}")]
     JsonSerializeError(#[from] serde_json::Error),
 
-    #[error("JSON 反序列化失败: {message}")]
+    #[error("failed to deserialize JSON: {message}")]
     JsonDeserializeError {
         message: String,
         #[source]
         source: Option<serde_json::Error>,
     },
 
-    #[error("插件执行错误: {plugin_name} - {message}")]
+    #[error("plugin execution failed: {plugin_name} - {message}")]
     PluginExecutionError {
         plugin_name: String,
         message: String,
@@ -39,19 +50,19 @@ pub enum ArtfulError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
-    #[error("缺少必要参数: {0}")]
+    #[error("missing required parameter: {0}")]
     MissingParameter(String),
 
-    #[error("参数无效: {param} - {message}")]
+    #[error("invalid parameter: {param} - {message}")]
     InvalidParameter { param: String, message: String },
 
-    #[error("响应解析失败: {0}")]
+    #[error("failed to parse response: {0}")]
     DirectionParseError(String),
 
-    #[error("缺少 HTTP Request")]
+    #[error("missing HTTP request")]
     MissingRequest,
 
-    #[error("缺少 HTTP Response")]
+    #[error("missing HTTP response")]
     MissingResponse,
 
     #[error("{0}")]

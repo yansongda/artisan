@@ -24,7 +24,7 @@ impl Plugin for StartPlugin {
 
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
         if rocket.payload.is_empty() {
-            rocket.merge_payload(rocket.get_params().clone());
+            rocket.merge_params_to_payload();
         }
 
         next.call(rocket).await

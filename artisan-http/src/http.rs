@@ -1,48 +1,62 @@
-//! HTTP 客户端模块
+//! HTTP 客户端构建模块
 //!
-//! 提供全局 HTTP 客户端单例，基于 reqwest 实现。
+//! 提供 HTTP 客户端构建与框架默认客户端，基于 reqwest 实现。
 //!
 //! # 设计说明
 //!
-//! - 使用 [`OnceLock`] 实现全局单例，共享连接池
-//! - 连接池参数从全局 [`Config::http`](crate::config::Config::http) 读取
+//! - 客户端在 `Artful` 构造时按 [`ClientOptions`] 显式构建（fail-fast）
+//! - 连接池参数、超时、User-Agent 均从 [`ClientOptions`] 消费
 //! - Per-request timeout 通过 [`RocketConfig::http`](crate::rocket::RocketConfig::http) 设置
-//! - 构建失败时使用 fallback 默认客户端
+//! - 默认客户端构建失败时使用 fallback
 
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::artful::Artful;
-use crate::rocket::HttpOptions;
+use crate::rocket::ClientOptions;
 
 const DEFAULT_POOL_IDLE_TIMEOUT: u64 = 90;
 const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 20;
 const DEFAULT_USER_AGENT: &str = concat!("yansongda/artisan-http:", env!("CARGO_PKG_VERSION"));
 
-/// 获取全局 HTTP 客户端单例
+/// 获取框架默认 HTTP 客户端
 ///
-/// 首次调用时根据 [`Config::http`](crate::config::Config::http) 构建客户端，
-/// 后续调用返回同一实例，共享连接池。
-pub fn get_client() -> &'static reqwest::Client {
+/// 按 [`ClientOptions::default()`] 构建客户端（惰性初始化，仅构建一次），
+/// 构建失败时使用 fallback 默认客户端。
+/// 供 [`Rocket::new`](crate::rocket::Rocket::new) 初始化默认 client。
+pub(crate) fn default_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
     CLIENT.get_or_init(|| {
-        build_client(Artful::get_config().http).unwrap_or_else(|_| fallback_client())
+        build_client(ClientOptions::default()).unwrap_or_else(|_| fallback_client())
     })
 }
 
-fn build_client(http: HttpOptions) -> Result<reqwest::Client, reqwest::Error> {
-    let pool_idle_timeout = http.pool_idle_timeout.unwrap_or(DEFAULT_POOL_IDLE_TIMEOUT);
-    let pool_max_idle_per_host = http
+/// 按 [`ClientOptions`] 构建 HTTP 客户端（消费全部字段）
+pub(crate) fn build_client(options: ClientOptions) -> Result<reqwest::Client, reqwest::Error> {
+    let pool_idle_timeout = options
+        .pool_idle_timeout
+        .unwrap_or(DEFAULT_POOL_IDLE_TIMEOUT);
+    let pool_max_idle_per_host = options
         .pool_max_idle_per_host
         .unwrap_or(DEFAULT_POOL_MAX_IDLE_PER_HOST);
-    let user_agent = http.user_agent.unwrap_or(DEFAULT_USER_AGENT);
+    let user_agent = options
+        .user_agent
+        .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
 
-    reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .pool_idle_timeout(Some(Duration::from_secs(pool_idle_timeout)))
         .pool_max_idle_per_host(pool_max_idle_per_host)
-        .user_agent(user_agent)
-        .build()
+        .user_agent(user_agent);
+
+    if let Some(secs) = options.timeout {
+        builder = builder.timeout(Duration::from_secs(secs));
+    }
+
+    if let Some(secs) = options.connect_timeout {
+        builder = builder.connect_timeout(Duration::from_secs(secs));
+    }
+
+    builder.build()
 }
 
 fn fallback_client() -> reqwest::Client {

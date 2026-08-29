@@ -35,4 +35,9 @@ impl Packer for JsonPacker {
             source: Some(e),
         })
     }
+
+    /// JSON 请求体的 Content-Type
+    fn content_type(&self) -> Option<&'static str> {
+        Some("application/json")
+    }
 }

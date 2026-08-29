@@ -118,7 +118,7 @@ fn test_flow_ctrl_skip_rest_direct() {
 }
 
 #[test]
-fn test_flow_ctrl_cease_direct() {
+fn test_flow_ctrl_skip_rest_directly() {
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(TestPlugin {
             name: "p1".to_string(),
@@ -132,7 +132,7 @@ fn test_flow_ctrl_cease_direct() {
     assert!(ctrl.has_next());
     assert!(!ctrl.is_ceased());
 
-    ctrl.cease();
+    ctrl.skip_rest();
 
     assert!(!ctrl.has_next());
     assert!(ctrl.is_ceased());
@@ -147,7 +147,7 @@ fn test_flow_ctrl_is_ceased() {
     assert!(!ctrl.is_ceased());
 
     let mut ceased_ctrl = FlowCtrl::new(plugins);
-    ceased_ctrl.cease();
+    ceased_ctrl.skip_rest();
     assert!(ceased_ctrl.is_ceased());
 }
 
@@ -182,7 +182,7 @@ async fn test_flow_ctrl_empty_plugins() {
 }
 
 #[tokio::test]
-async fn test_flow_ctrl_call_next_after_cease() {
+async fn test_flow_ctrl_call_next_after_skip_rest() {
     struct MarkPlugin {
         name: String,
     }
@@ -213,8 +213,8 @@ async fn test_flow_ctrl_call_next_after_cease() {
     let mut ctrl = FlowCtrl::new(plugins);
     let mut rocket = Rocket::new(HashMap::new());
 
-    // 先手动调用 cease
-    ctrl.cease();
+    // 先手动调用 skip_rest
+    ctrl.skip_rest();
 
     // 调用 call_next 应该立即返回 Ok(())
     let result = ctrl.call_next(&mut rocket).await;
@@ -223,7 +223,7 @@ async fn test_flow_ctrl_call_next_after_cease() {
 }
 
 #[test]
-fn test_flow_ctrl_cease_clears_has_next() {
+fn test_flow_ctrl_skip_rest_clears_has_next() {
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(TestPlugin {
             name: "p1".to_string(),
@@ -241,16 +241,16 @@ fn test_flow_ctrl_cease_clears_has_next() {
     // 初始状态
     assert!(ctrl.has_next());
 
-    // 执行 cease
-    ctrl.cease();
+    // 执行 skip_rest
+    ctrl.skip_rest();
 
-    // cease 后 has_next 应为 false（因为 cursor 被设置为 plugins.len())
+    // skip_rest 后 has_next 应为 false（因为 cursor 被设置为 plugins.len())
     assert!(!ctrl.has_next());
 }
 
 #[test]
-fn test_flow_ctrl_skip_rest_vs_cease() {
-    let plugins1: Vec<Arc<dyn Plugin>> = vec![
+fn test_flow_ctrl_skip_rest_is_terminal() {
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(TestPlugin {
             name: "p1".to_string(),
         }),
@@ -259,22 +259,8 @@ fn test_flow_ctrl_skip_rest_vs_cease() {
         }),
     ];
 
-    let plugins2: Vec<Arc<dyn Plugin>> = vec![
-        Arc::new(TestPlugin {
-            name: "p1".to_string(),
-        }),
-        Arc::new(TestPlugin {
-            name: "p2".to_string(),
-        }),
-    ];
-
-    let mut ctrl_skip = FlowCtrl::new(plugins1);
-    ctrl_skip.skip_rest();
-    assert!(!ctrl_skip.has_next());
-    assert!(ctrl_skip.is_ceased());
-
-    let mut ctrl_cease = FlowCtrl::new(plugins2);
-    ctrl_cease.cease();
-    assert!(!ctrl_cease.has_next());
-    assert!(ctrl_cease.is_ceased());
+    let mut ctrl = FlowCtrl::new(plugins);
+    ctrl.skip_rest();
+    assert!(!ctrl.has_next());
+    assert!(ctrl.is_ceased());
 }
