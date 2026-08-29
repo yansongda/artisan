@@ -47,7 +47,9 @@ async fn main() -> artisan_http::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(HashMap::new(), plugins).await?;
+    let artful = Artful::new()?;
+
+    let result = artful.artful(HashMap::new(), plugins).await?;
 
     if let artisan_http::Destination::Json(json) = result {
         println!("JSON Response: {}", json);
@@ -67,7 +69,7 @@ async fn main() -> artisan_http::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    let result = Artful::artful(HashMap::new(), plugins).await?;
+    let result = artful.artful(HashMap::new(), plugins).await?;
 
     if let artisan_http::Destination::Response(response) = result {
         println!("Response status: {}", response.status());
