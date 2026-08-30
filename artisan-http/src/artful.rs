@@ -6,7 +6,7 @@
 //!
 //! - [`Artful::new`] - 以默认配置创建实例
 //! - [`Artful::with_config`] - 以指定配置创建实例（构造时构建 HTTP 客户端，fail-fast）
-//! - [`Artful::with_builder`] - 以指定配置与自定义构建流程创建实例（config.http 生效 + 回调叠加）
+//! - [`Artful::with_client_builder`] - 以指定配置与自定义构建流程创建实例（config.http 生效 + 回调叠加）
 //! - [`Artful::with_client`] - 以指定配置与外部构建的 HTTP 客户端创建实例
 //! - [`Artful::artful`] - 执行完整插件链
 //! - [`Artful::shortcut`] - 使用 Shortcut 快捷方式
@@ -58,7 +58,7 @@ impl Artful {
     ///
     /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败。
     pub fn with_config(config: Config) -> Result<Self> {
-        Self::with_builder(config, |builder| builder)
+        Self::with_client_builder(config, |builder| builder)
     }
 
     /// 以指定配置与自定义构建流程创建实例
@@ -72,7 +72,7 @@ impl Artful {
     ///
     /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败
     /// （含回调叠加后仍不合法的情况，如非法 user_agent）。
-    pub fn with_builder(
+    pub fn with_client_builder(
         config: Config,
         customize: impl FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
     ) -> Result<Self> {
@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn with_builder_build_error_propagates() {
+    fn with_client_builder_build_error_propagates() {
         // 回调叠加后仍不合法 → ClientBuildError
         let config = Config {
             http: ClientOptions {
@@ -234,7 +234,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let err = Artful::with_builder(config, |builder| builder).unwrap_err();
+        let err = Artful::with_client_builder(config, |builder| builder).unwrap_err();
 
         assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
     }

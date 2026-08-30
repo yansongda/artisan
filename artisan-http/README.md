@@ -146,10 +146,10 @@ static WECHAT: LazyLock<Artful> = /* ... */;
 `ClientOptions` only covers the common options (timeout / connect_timeout / connection pool / User-Agent). Ordered from least to most client control, pick one of the three constructors as needed:
 
 ```rust
-// ① with_builder (recommended): builds on top of config.http, with the callback layering on
+// ① with_client_builder (recommended): builds on top of config.http, with the callback layering on
 //    capabilities that ClientOptions cannot express;
 //    setters written later inside the callback override the framework defaults (e.g. overriding the default UA)
-let artful = Artful::with_builder(config, |builder| {
+let artful = Artful::with_client_builder(config, |builder| {
     builder
         .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
         .cookie_store(true)

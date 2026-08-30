@@ -146,9 +146,9 @@ static WECHAT: LazyLock<Artful> = /* ... */;
 `ClientOptions` 仅覆盖常用选项（timeout / connect_timeout / 连接池 / User-Agent）。按 client 控制权从低到高，三个构造函数按需选择：
 
 ```rust
-// ① with_builder（推荐）：以 config.http 为基座，回调叠加 ClientOptions 表达不了的能力；
+// ① with_client_builder（推荐）：以 config.http 为基座，回调叠加 ClientOptions 表达不了的能力；
 //    回调内后写的 setter 覆盖框架默认值（如覆盖默认 UA）
-let artful = Artful::with_builder(config, |builder| {
+let artful = Artful::with_client_builder(config, |builder| {
     builder
         .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
         .cookie_store(true)

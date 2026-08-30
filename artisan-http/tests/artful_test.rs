@@ -435,10 +435,10 @@ async fn test_http_nonexistent_host() {
     assert!(result.is_err());
 }
 
-// ============ Artful::with_builder 测试 ============
+// ============ Artful::with_client_builder 测试 ============
 
 #[tokio::test]
-async fn with_builder_applies_config_http() {
+async fn with_client_builder_applies_config_http() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -451,7 +451,7 @@ async fn with_builder_applies_config_http() {
         .mount(&mock_server)
         .await;
 
-    // 空回调：with_builder 等价于 with_config，config.http.timeout 生效
+    // 空回调：with_client_builder 等价于 with_config，config.http.timeout 生效
     let config = Config {
         http: ClientOptions {
             timeout: Some(1),
@@ -459,7 +459,7 @@ async fn with_builder_applies_config_http() {
         },
         ..Default::default()
     };
-    let artful = Artful::with_builder(config, |builder| builder).unwrap();
+    let artful = Artful::with_client_builder(config, |builder| builder).unwrap();
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
@@ -477,7 +477,7 @@ async fn with_builder_applies_config_http() {
 }
 
 #[tokio::test]
-async fn with_builder_customization_overrides() {
+async fn with_client_builder_customization_overrides() {
     let mock_server = MockServer::start().await;
 
     // 回调叠加生效：自定义 UA 覆盖框架默认 UA
@@ -496,7 +496,8 @@ async fn with_builder_customization_overrides() {
         ..Default::default()
     };
     let artful =
-        Artful::with_builder(config, |builder| builder.user_agent("custom-agent/7.7")).unwrap();
+        Artful::with_client_builder(config, |builder| builder.user_agent("custom-agent/7.7"))
+            .unwrap();
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
