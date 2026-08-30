@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > 本文件仅记录 artisan facade 相关变更，各子 crate 变更详见各自目录下的 CHANGELOG.md
 
+## [0.15.0] - 2026-08-30
+
+### Added
+
+- 透传 `artisan-http` 0.15.0 新增的 `Artful::builder()` 链式构建器
+  ([5bd0e97](https://github.com/yansongda/artisan/commit/5bd0e97))
+
+### Changed
+
+- **BREAKING**: 同步 `artisan-http` 0.15.0——`Artful::with_builder` 更名 `with_client_builder`（无兼容层），详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+  ([5bd0e97](https://github.com/yansongda/artisan/commit/5bd0e97))
+
 ## [0.14.0] - 2026-08-29
 
 ### Changed
