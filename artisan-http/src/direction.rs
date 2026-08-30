@@ -107,6 +107,14 @@ mod tests {
         assert!(matches!(dest, Destination::Json(_)));
     }
 
+    fn sample_response() -> reqwest::Response {
+        let inner = http::Response::builder()
+            .status(200)
+            .body(Vec::new())
+            .unwrap();
+        reqwest::Response::from(inner)
+    }
+
     #[test]
     fn test_destination_debug() {
         let dest = Destination::Json(json!({"test": 1}));
@@ -115,6 +123,9 @@ mod tests {
 
         let dest_none = Destination::None;
         assert_eq!(format!("{:?}", dest_none), "None");
+
+        let dest_resp = Destination::Response(sample_response());
+        assert!(format!("{:?}", dest_resp).contains("Response"));
     }
 
     #[test]
@@ -125,6 +136,9 @@ mod tests {
 
         let dest_none = Destination::None;
         assert_eq!(format!("{}", dest_none), "None");
+
+        let dest_resp = Destination::Response(sample_response());
+        assert_eq!(format!("{}", dest_resp), "<HTTP Response>");
     }
 
     #[test]

@@ -60,3 +60,35 @@ impl Plugin for ParserPlugin {
         next.call(rocket).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flow_ctrl::FlowCtrl;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn no_request_skips_execution() {
+        // NoRequest:不发起请求,destination 保持 None
+        let mut rocket = Rocket::new(HashMap::new());
+        rocket.config.direction = DirectionKind::NoRequest;
+
+        let plugins: Vec<Arc<dyn Plugin>> = vec![Arc::new(ParserPlugin)];
+        FlowCtrl::new(plugins).call_next(&mut rocket).await.unwrap();
+
+        assert!(rocket.destination.is_none());
+        assert!(rocket.destination_origin.is_none());
+    }
+
+    #[tokio::test]
+    async fn missing_request_when_radar_absent() {
+        // radar 为 None(链中缺少 AddRadarPlugin)→ MissingRequest,不触碰网络
+        let mut rocket = Rocket::new(HashMap::new());
+
+        let plugins: Vec<Arc<dyn Plugin>> = vec![Arc::new(ParserPlugin)];
+        let result = FlowCtrl::new(plugins).call_next(&mut rocket).await;
+
+        assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
+    }
+}
