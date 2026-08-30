@@ -38,15 +38,15 @@ cargo add artisan --no-default-features
 ```toml
 # Cargo.toml
 [dependencies]
-artisan = "~0.14.0"
+artisan = "0.15.0"
 
 # Depend on the implementation crate directly
 [dependencies]
-artisan-http = "~0.14.0"
+artisan-http = "0.15.0"
 
 # Pure facade (HTTP disabled)
 [dependencies]
-artisan = { version = "~0.14.0", default-features = false }
+artisan = { version = "0.15.0", default-features = false }
 ```
 
 ## Quick Start
