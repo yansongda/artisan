@@ -143,13 +143,13 @@ static WECHAT: LazyLock<Artful> = /* ... */;
 
 ### Customizing the HTTP Client
 
-`ClientOptions` only covers the common options (timeout / connect_timeout / connection pool / User-Agent). Ordered from least to most client control, pick one of the three constructors as needed:
+`ClientOptions` only covers the common options (timeout / connect_timeout / connection pool / User-Agent). Ordered from least to most client control, pick one of the four constructors as needed:
 
 ```rust
-// ① with_builder (recommended): builds on top of config.http, with the callback layering on
+// ① with_client_builder (recommended): builds on top of config.http, with the callback layering on
 //    capabilities that ClientOptions cannot express;
 //    setters written later inside the callback override the framework defaults (e.g. overriding the default UA)
-let artful = Artful::with_builder(config, |builder| {
+let artful = Artful::with_client_builder(config, |builder| {
     builder
         .proxy(reqwest::Proxy::all("http://corp-proxy:8080")?)
         .cookie_store(true)
@@ -162,6 +162,13 @@ let custom = reqwest::Client::builder()
     .cookie_store(true)
     .build()?;
 let artful = Artful::with_client(Config::default(), custom);
+
+// ③ builder (chainable): accumulate config / customize / client optionally, then build;
+//    once .client() is set, neither config.http nor customize participates in the build
+let artful = Artful::builder()
+    .config(config)
+    .customize(|builder| builder.cookie_store(true))
+    .build()?;
 
 let result = artful.shortcut(MyApiShortcut, params).await?;
 ```

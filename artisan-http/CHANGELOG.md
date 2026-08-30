@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Artful::builder()` 链式构建器：`ArtfulBuilder` 提供 `config()` / `customize()` / `client()` 可选 setter（后写覆盖先写）与 `build() -> Result<Artful>`；构建优先级为注入 client > config+customize；`ArtfulBuilder` 实现 `Default` 与 `Debug`，满足 `Send`（非 `Sync`）
+
+### Changed
+
+- **BREAKING**: `Artful::with_builder` 更名 `with_client_builder`（原 `with_builder` 物理删除，无兼容层；语义不变：以 `config.http` 为基座、回调叠加 `reqwest::ClientBuilder` 能力后构建）
+
 ## [0.14.0] - 2026-08-29
 
 > **破坏性变更版本**：本版本集中清理历史 API（不做兼容层），升级前请完整阅读以下内容。

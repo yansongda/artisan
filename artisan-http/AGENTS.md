@@ -34,7 +34,7 @@ cargo run -p artisan-http --example direction
 ```
 src/
 ├── lib.rs           # Public API exports
-├── artful.rs        # Artful struct (instance: new/with_config/with_client, artful, shortcut, raw)
+├── artful.rs        # Artful struct (instance: new/with_config/with_client_builder/with_client + builder(), artful, shortcut, raw)
 ├── rocket.rs        # Rocket + RocketConfig + ClientOptions/RequestOptions
 ├── flow_ctrl.rs     # FlowCtrl + Next (onion control)
 ├── plugin.rs        # Plugin trait (async_trait)
@@ -89,7 +89,7 @@ impl Plugin for MyPlugin {
 
 ### Artful Instance & Client
 
-`Artful` is an instance type: config and `reqwest::Client` are resolved at construction (`Artful::new()` / `Artful::with_config(config)`, fail-fast via `build_client`; `Artful::with_builder(config, customize)` applies `config.http` first, then the callback layers extras — later setters win; `Artful::with_client(config, client)` adopts an externally built client — `config.http` does not apply to it, recorded only). `rocket.client` is injected per request. App layer can wrap an instance in `std::sync::LazyLock` for a global singleton (see README). Client-level options live in `ClientOptions` (`Config.http`); request-level options in `RequestOptions` (`RocketConfig.http`, timeout only).
+`Artful` is an instance type: config and `reqwest::Client` are resolved at construction (`Artful::new()` / `Artful::with_config(config)`, fail-fast via `build_client`; `Artful::with_client_builder(config, customize)` applies `config.http` first, then the callback layers extras — later setters win; `Artful::with_client(config, client)` adopts an externally built client — `config.http` does not apply to it, recorded only; `Artful::builder()` returns an `ArtfulBuilder` — the chainable unified entry (`config` / `customize` / `client` all optional, later writes override earlier; `build()` priority: injected client > `config.http` + `customize`), sharing the same build logic as the constructors above). `rocket.client` is injected per request. App layer can wrap an instance in `std::sync::LazyLock` for a global singleton (see README). Client-level options live in `ClientOptions` (`Config.http`); request-level options in `RequestOptions` (`RocketConfig.http`, timeout only).
 
 ### Error Handling
 

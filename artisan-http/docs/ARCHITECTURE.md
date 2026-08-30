@@ -441,7 +441,7 @@ impl Artful {
 
     /// 以指定配置与自定义构建流程创建实例
     /// （先按 config.http 应用框架默认值，回调叠加，后写 setter 覆盖先写值）
-    pub fn with_builder(
+    pub fn with_client_builder(
         config: Config,
         customize: impl FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
     ) -> Result<Self>;
@@ -449,6 +449,9 @@ impl Artful {
     /// 以指定配置与外部构建的 HTTP 客户端创建实例
     /// （config.http 不作用于注入的 client，仅作为配置记录）
     pub fn with_client(config: Config, client: reqwest::Client) -> Self;
+
+    /// 创建链式构建器（统一构建入口）
+    pub fn builder() -> ArtfulBuilder;
 
     /// 获取实例配置
     pub fn config(&self) -> &Config;
@@ -495,7 +498,25 @@ impl Artful {
             .map_err(ArtfulError::RequestFailed)
     }
 }
+
+impl ArtfulBuilder {
+    /// 设置实例配置（覆盖式：后写覆盖先写；config.http 仅在未注入 client 时参与构建）
+    pub fn config(self, config: Config) -> Self;
+
+    /// 设置 HTTP 客户端自定义构建回调（覆盖式：后写覆盖先写）
+    pub fn customize<F>(self, f: F) -> Self
+    where
+        F: FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder + Send + 'static;
+
+    /// 注入外部构建的 HTTP 客户端（优先级最高：build 时忽略 config.http 与 customize）
+    pub fn client(self, client: reqwest::Client) -> Self;
+
+    /// 按优先级构建：注入 client > config.http + customize
+    pub fn build(self) -> Result<Artful>;
+}
 ```
+
+> `ArtfulBuilder` 另实现 `Default` 与手写 `Debug`（装箱字段仅打印是否注入），满足 `Send`（非 `Sync`）。
 
 ### 3.2 HTTP 客户端设计
 
@@ -512,9 +533,10 @@ impl Artful {
 
 | 入口 | 构建方式 | `config.http` 是否生效 |
 |------|----------|------------------------|
-| `Artful::new()` / `Artful::with_config(config)` | 框架全托管：`build_builder` 按 `config.http` 应用全部选项后构建（`with_config` 即 `with_builder(config, \|b\| b)`） | ✅ |
-| `Artful::with_builder(config, customize)` | 先按 `config.http` 应用框架默认值，再由回调叠加 `ClientOptions` 无法表达的能力（代理、TLS 证书、cookie 会话、重定向策略等）后构建；回调内后写的 setter 覆盖先写值 | ✅（回调可覆盖） |
+| `Artful::new()` / `Artful::with_config(config)` | 框架全托管：`build_builder` 按 `config.http` 应用全部选项后构建（`with_config` 即 `with_client_builder(config, \|b\| b)`） | ✅ |
+| `Artful::with_client_builder(config, customize)` | 先按 `config.http` 应用框架默认值，再由回调叠加 `ClientOptions` 无法表达的能力（代理、TLS 证书、cookie 会话、重定向策略等）后构建；回调内后写的 setter 覆盖先写值 | ✅（回调可覆盖） |
 | `Artful::with_client(config, client)` | 完全接管：注入外部构建的 client（跨实例共享连接池时使用） | ❌（仅作配置记录） |
+| `Artful::builder()` ... `build()` | 链式统一入口：`config` / `customize` / `client` 可选叠加（后写覆盖先写）；未注入 client 时等价 `with_client_builder`，注入 client 时等价 `with_client`（优先级 client > config+customize） | 注入 client 时 ❌（仅作配置记录）；否则 ✅（回调可覆盖） |
 
 ```rust
 use std::sync::OnceLock;
@@ -797,7 +819,14 @@ let artful = Artful::new()?;
 let artful = Artful::with_config(config)?;
 
 // 需要 ClientOptions 表达不了的能力（代理/TLS 证书/cookie 会话等）时，回调叠加（config.http 仍生效）
-let artful = Artful::with_builder(config, |builder| builder.cookie_store(true))?;
+let artful = Artful::with_client_builder(config, |builder| builder.cookie_store(true))?;
+
+// 或用链式 builder（统一入口）：config / customize / client 可选叠加后 build；
+// 设置 .client() 时 config.http 与 customize 均不参与构建（优先级 client > config+customize）
+let artful = Artful::builder()
+    .config(config)
+    .customize(|builder| builder.cookie_store(true))
+    .build()?;
 
 // 应用层全局单例推荐 LazyLock（见 §2.3）
 ```

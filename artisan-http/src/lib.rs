@@ -70,7 +70,7 @@ pub mod plugins;
 pub mod rocket;
 pub mod shortcut;
 
-pub use artful::Artful;
+pub use artful::{Artful, ArtfulBuilder};
 pub use config::Config;
 pub use direction::{Destination, Direction, DirectionKind};
 pub use error::{ArtfulError, Result};
@@ -87,11 +87,14 @@ mod tests {
     use super::*;
 
     fn assert_send_sync<T: Send + Sync>() {}
+    fn assert_send<T: Send>() {}
 
     #[test]
     fn core_types_are_send_sync() {
         // 框架契约：核心类型可跨 tokio task 共享
         assert_send_sync::<Artful>();
+        // builder 为一次性消费对象：只断言 Send（装箱的 FnOnce 回调非 Sync）
+        assert_send::<ArtfulBuilder>();
         assert_send_sync::<Rocket>();
         assert_send_sync::<FlowCtrl>();
         assert_send_sync::<Config>();
