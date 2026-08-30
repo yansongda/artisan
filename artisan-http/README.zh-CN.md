@@ -143,7 +143,7 @@ static WECHAT: LazyLock<Artful> = /* ... */;
 
 ### 自定义 HTTP 客户端
 
-`ClientOptions` 仅覆盖常用选项（timeout / connect_timeout / 连接池 / User-Agent）。按 client 控制权从低到高，三个构造函数按需选择：
+`ClientOptions` 仅覆盖常用选项（timeout / connect_timeout / 连接池 / User-Agent）。按 client 控制权从低到高，四个构造函数按需选择：
 
 ```rust
 // ① with_client_builder（推荐）：以 config.http 为基座，回调叠加 ClientOptions 表达不了的能力；
@@ -161,6 +161,13 @@ let custom = reqwest::Client::builder()
     .cookie_store(true)
     .build()?;
 let artful = Artful::with_client(Config::default(), custom);
+
+// ③ builder（链式）：config / customize / client 可选叠加后统一 build；
+//    一旦设置 .client()，config.http 与 customize 均不参与构建
+let artful = Artful::builder()
+    .config(config)
+    .customize(|builder| builder.cookie_store(true))
+    .build()?;
 
 let result = artful.shortcut(MyApiShortcut, params).await?;
 ```
