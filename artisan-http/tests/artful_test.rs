@@ -513,3 +513,125 @@ async fn with_client_builder_customization_overrides() {
 
     assert!(matches!(result, artisan_http::Destination::Json(_)));
 }
+
+// ============ Artful::builder 链式构建器测试 ============
+
+#[tokio::test]
+async fn builder_config_and_customize_takes_effect() {
+    let mock_server = MockServer::start().await;
+
+    // builder 叠加：config 不设 UA，customize 设置 UA → customize 生效
+    Mock::given(method("GET"))
+        .and(path("/builder-customize"))
+        .and(header("user-agent", "custom-agent/7.7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let artful = Artful::builder()
+        .config(Config {
+            http: ClientOptions {
+                user_agent: None,
+                timeout: Some(30),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .customize(|builder| builder.user_agent("custom-agent/7.7"))
+        .build()
+        .unwrap();
+
+    // config() 读回构造时传入的配置
+    assert_eq!(artful.config().http.timeout, Some(30));
+    assert!(artful.config().http.user_agent.is_none());
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/builder-customize",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+
+    assert!(matches!(result, artisan_http::Destination::Json(_)));
+}
+
+#[tokio::test]
+async fn builder_client_injection_takes_effect() {
+    let mock_server = MockServer::start().await;
+
+    // client 注入优先级最高：customize 设置的 UA 与 config.http 均不作用于请求
+    Mock::given(method("GET"))
+        .and(path("/builder-client"))
+        .and(header("user-agent", "injected-agent/9.9"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let injected_client = reqwest::Client::builder()
+        .user_agent("injected-agent/9.9")
+        .build()
+        .unwrap();
+
+    let artful = Artful::builder()
+        .config(Config {
+            http: ClientOptions {
+                timeout: Some(123),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .customize(|builder| builder.user_agent("other-agent"))
+        .client(injected_client)
+        .build()
+        .unwrap();
+
+    // config() 读回构造时传入的配置（仅作为配置记录，不作用于注入的 client）
+    assert_eq!(artful.config().http.timeout, Some(123));
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/builder-client",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+
+    assert!(matches!(result, artisan_http::Destination::Json(_)));
+}
+
+#[tokio::test]
+async fn builder_default_build_succeeds() {
+    let mock_server = MockServer::start().await;
+
+    // 默认 builder 构建：完整插件链请求成功
+    Mock::given(method("GET"))
+        .and(path("/builder-default"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock_server)
+        .await;
+
+    let artful = Artful::builder().build().unwrap();
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::GET,
+            url: mock_server.uri() + "/builder-default",
+        }),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+
+    assert!(matches!(result, artisan_http::Destination::Json(_)));
+}
