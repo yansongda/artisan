@@ -1,7 +1,7 @@
 [package]
 name = "artisan"
 version = "0.14.0"
-description = "Artisan workspace facade with feature-controlled re-export"
+description = "🧰 Artisan — a growing collection of handy Rust crates"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

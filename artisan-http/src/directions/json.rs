@@ -37,3 +37,59 @@ impl Direction for JsonDirection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// 构造携带指定响应体的 Rocket(经 http::Response 转换，无需网络)
+    fn rocket_with_response(body: &'static str) -> Rocket {
+        let mut rocket = Rocket::new(HashMap::new());
+        let inner = http::Response::builder()
+            .status(200)
+            .body(body.as_bytes().to_vec())
+            .unwrap();
+        rocket.destination_origin = Some(reqwest::Response::from(inner));
+        rocket
+    }
+
+    #[tokio::test]
+    async fn parses_valid_json() {
+        let mut rocket = rocket_with_response(r#"{"ok":true,"code":0}"#);
+
+        let result = JsonDirection.parse(&mut rocket).await.unwrap();
+
+        match result {
+            Destination::Json(value) => {
+                assert_eq!(value["ok"], true);
+                assert_eq!(value["code"], 0);
+            }
+            other => panic!("Expected JSON destination, got {:?}", other),
+        }
+        // 解析后原始响应应被消费
+        assert!(rocket.destination_origin.is_none());
+    }
+
+    #[tokio::test]
+    async fn errors_on_invalid_json() {
+        let mut rocket = rocket_with_response("this is not json");
+
+        let result = JsonDirection.parse(&mut rocket).await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            ArtfulError::JsonDeserializeError { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_response_when_origin_absent() {
+        // destination_origin 默认为 None → MissingResponse
+        let mut rocket = Rocket::new(HashMap::new());
+
+        let result = JsonDirection.parse(&mut rocket).await;
+
+        assert!(matches!(result.unwrap_err(), ArtfulError::MissingResponse));
+    }
+}

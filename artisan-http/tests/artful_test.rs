@@ -26,13 +26,24 @@ impl Plugin for MethodUrlPlugin {
     }
 }
 
+/// 从 Destination 中解出 JSON 结果，类型不符则 panic
+fn expect_json(result: Destination) -> serde_json::Value {
+    match result {
+        Destination::Json(json) => json,
+        other => panic!("Expected JSON destination, got {:?}", other),
+    }
+}
+
 #[tokio::test]
 async fn test_artisan_basic() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
         .and(path("/test"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "message": "hello artisan", "success": true})),
+        )
         .mount(&mock_server)
         .await;
 
@@ -49,7 +60,10 @@ async fn test_artisan_basic() {
     let artful = Artful::new().unwrap();
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
-    assert!(matches!(result, Destination::Json(_)));
+    let json = expect_json(result);
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["message"], "hello artisan");
+    assert_eq!(json["success"], true);
 }
 
 #[tokio::test]
@@ -72,32 +86,15 @@ async fn test_artisan_with_response_direction() {
     let mut ctrl = FlowCtrl::new(plugins);
     ctrl.call_next(&mut rocket).await.unwrap();
 
-    assert!(matches!(rocket.destination, Some(Destination::Response(_))));
-}
-
-// ============ Artful 实例配置测试 ============
-
-#[test]
-fn test_artful_config_default() {
-    // new() 使用默认配置，config() 返回构造时配置
-    let artful = Artful::new().unwrap();
-    assert!(artful.config().extra.is_empty());
-    assert!(artful.config().http.timeout.is_none());
-}
-
-#[test]
-fn test_artful_config_roundtrip() {
-    // with_config 保存的配置可经 config() 完整读回
-    let config = Config {
-        http: ClientOptions {
-            timeout: Some(30),
-            ..Default::default()
-        },
-        ..Default::default()
+    let response = match rocket.destination.expect("destination should be set") {
+        Destination::Response(response) => response,
+        other => panic!("Expected Response destination, got {:?}", other),
     };
-    let artful = Artful::with_config(config).unwrap();
-    assert_eq!(artful.config().http.timeout, Some(30));
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "raw response");
 }
+
+// ============ Artful 实例配置链路测试 ============
 
 #[tokio::test]
 async fn test_artful_with_client_takes_effect() {
@@ -138,37 +135,8 @@ async fn test_artful_with_client_takes_effect() {
     ];
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
-    assert!(matches!(result, Destination::Json(_)));
-}
-
-#[test]
-fn test_artful_new_and_accessors() {
-    // 成功路径：with_config 保存配置并构建 client
-    let config = Config {
-        http: ClientOptions {
-            timeout: Some(10),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let artful = Artful::with_config(config).unwrap();
-    assert_eq!(artful.config().http.timeout, Some(10));
-    let _client: &reqwest::Client = artful.client();
-
-    // 默认构造路径
-    let artful = Artful::new().unwrap();
-    assert!(artful.config().extra.is_empty());
-
-    // 失败路径：非法 user_agent 导致 client 构建失败 → ClientBuildError
-    let bad = Config {
-        http: ClientOptions {
-            user_agent: Some("bad\nua".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let err = Artful::with_config(bad).unwrap_err();
-    assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
+    let json = expect_json(result);
+    assert_eq!(json["ok"], true);
 }
 
 // ============ Artful raw 方法测试 ============
@@ -192,6 +160,9 @@ async fn test_artful_raw_success() {
 
     let response = artful.raw(request).await.unwrap();
     assert_eq!(response.status(), 200);
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"], "ok");
 }
 
 #[tokio::test]
@@ -323,7 +294,10 @@ async fn test_http_404_response() {
 
     Mock::given(method("GET"))
         .and(path("/not-found"))
-        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "Not Found"})))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_json(json!({"error": "Not Found", "status": "not_found"})),
+        )
         .mount(&mock_server)
         .await;
 
@@ -341,11 +315,9 @@ async fn test_http_404_response() {
     let artful = Artful::new().unwrap();
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
-    if let Destination::Json(json) = result {
-        assert_eq!(json["error"], "Not Found");
-    } else {
-        panic!("Expected JSON destination");
-    }
+    let json = expect_json(result);
+    assert_eq!(json["error"], "Not Found");
+    assert_eq!(json["status"], "not_found");
 }
 
 #[tokio::test]
@@ -355,7 +327,8 @@ async fn test_http_500_response() {
     Mock::given(method("POST"))
         .and(path("/server-error"))
         .respond_with(
-            ResponseTemplate::new(500).set_body_json(json!({"error": "Internal Server Error"})),
+            ResponseTemplate::new(500)
+                .set_body_json(json!({"error": "Internal Server Error", "status": "server_error"})),
         )
         .mount(&mock_server)
         .await;
@@ -374,11 +347,9 @@ async fn test_http_500_response() {
     let artful = Artful::new().unwrap();
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
-    if let Destination::Json(json) = result {
-        assert_eq!(json["error"], "Internal Server Error");
-    } else {
-        panic!("Expected JSON destination");
-    }
+    let json = expect_json(result);
+    assert_eq!(json["error"], "Internal Server Error");
+    assert_eq!(json["status"], "server_error");
 }
 
 #[tokio::test]
@@ -540,19 +511,4 @@ async fn with_builder_customization_overrides() {
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
     assert!(matches!(result, artisan_http::Destination::Json(_)));
-}
-
-#[test]
-fn with_builder_build_error_propagates() {
-    // 回调叠加后仍不合法 → ClientBuildError
-    let config = Config {
-        http: ClientOptions {
-            user_agent: Some("bad\nua".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let err = Artful::with_builder(config, |builder| builder).unwrap_err();
-
-    assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
 }

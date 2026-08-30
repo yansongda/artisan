@@ -166,3 +166,76 @@ impl Artful {
             .map_err(ArtfulError::RequestFailed)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rocket::ClientOptions;
+
+    #[test]
+    fn test_artful_config_default() {
+        // new() 使用默认配置，config() 返回构造时配置
+        let artful = Artful::new().unwrap();
+        assert!(artful.config().extra.is_empty());
+        assert!(artful.config().http.timeout.is_none());
+    }
+
+    #[test]
+    fn test_artful_config_roundtrip() {
+        // with_config 保存的配置可经 config() 完整读回
+        let config = Config {
+            http: ClientOptions {
+                timeout: Some(30),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let artful = Artful::with_config(config).unwrap();
+        assert_eq!(artful.config().http.timeout, Some(30));
+    }
+
+    #[test]
+    fn test_artful_new_and_accessors() {
+        // 成功路径：with_config 保存配置并构建 client
+        let config = Config {
+            http: ClientOptions {
+                timeout: Some(10),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let artful = Artful::with_config(config).unwrap();
+        assert_eq!(artful.config().http.timeout, Some(10));
+        let _client: &reqwest::Client = artful.client();
+
+        // 默认构造路径
+        let artful = Artful::new().unwrap();
+        assert!(artful.config().extra.is_empty());
+
+        // 失败路径：非法 user_agent 导致 client 构建失败 → ClientBuildError
+        let bad = Config {
+            http: ClientOptions {
+                user_agent: Some("bad\nua".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = Artful::with_config(bad).unwrap_err();
+        assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
+    }
+
+    #[test]
+    fn with_builder_build_error_propagates() {
+        // 回调叠加后仍不合法 → ClientBuildError
+        let config = Config {
+            http: ClientOptions {
+                user_agent: Some("bad\nua".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = Artful::with_builder(config, |builder| builder).unwrap_err();
+
+        assert!(matches!(err, ArtfulError::ClientBuildError { .. }));
+    }
+}

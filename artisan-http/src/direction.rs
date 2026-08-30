@@ -81,3 +81,79 @@ impl From<serde_json::Value> for Destination {
         Destination::Json(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_direction_kind_variants() {
+        assert!(matches!(DirectionKind::Json, DirectionKind::Json));
+        assert!(matches!(DirectionKind::Response, DirectionKind::Response));
+        assert!(matches!(DirectionKind::NoRequest, DirectionKind::NoRequest));
+    }
+
+    #[test]
+    fn test_destination_default() {
+        let dest = Destination::default();
+        assert!(matches!(dest, Destination::None));
+    }
+
+    #[test]
+    fn test_destination_from_json() {
+        let value = json!({"key": "value"});
+        let dest: Destination = value.into();
+        assert!(matches!(dest, Destination::Json(_)));
+    }
+
+    fn sample_response() -> reqwest::Response {
+        let inner = http::Response::builder()
+            .status(200)
+            .body(Vec::new())
+            .unwrap();
+        reqwest::Response::from(inner)
+    }
+
+    #[test]
+    fn test_destination_debug() {
+        let dest = Destination::Json(json!({"test": 1}));
+        let debug_str = format!("{:?}", dest);
+        assert!(debug_str.contains("Json"));
+
+        let dest_none = Destination::None;
+        assert_eq!(format!("{:?}", dest_none), "None");
+
+        let dest_resp = Destination::Response(sample_response());
+        assert!(format!("{:?}", dest_resp).contains("Response"));
+    }
+
+    #[test]
+    fn test_destination_display() {
+        let dest = Destination::Json(json!({"key": "value"}));
+        let display_str = format!("{}", dest);
+        assert!(display_str.contains("key"));
+
+        let dest_none = Destination::None;
+        assert_eq!(format!("{}", dest_none), "None");
+
+        let dest_resp = Destination::Response(sample_response());
+        assert_eq!(format!("{}", dest_resp), "<HTTP Response>");
+    }
+
+    #[test]
+    fn test_direction_kind_custom() {
+        #[derive(Debug)]
+        struct NullDirection;
+
+        #[async_trait::async_trait]
+        impl Direction for NullDirection {
+            async fn parse(&self, _rocket: &mut crate::Rocket) -> crate::Result<Destination> {
+                Err(crate::error::ArtfulError::MissingResponse)
+            }
+        }
+
+        let kind = DirectionKind::Custom(Arc::new(NullDirection));
+        assert!(matches!(kind, DirectionKind::Custom(_)));
+    }
+}

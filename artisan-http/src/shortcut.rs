@@ -22,3 +22,30 @@ pub trait Shortcut {
     /// 根据参数返回插件列表
     fn get_plugins(&self, params: &HashMap<String, Value>) -> Vec<Arc<dyn Plugin>>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
+
+    struct TestShortcut;
+
+    impl Shortcut for TestShortcut {
+        fn get_plugins(&self, _params: &HashMap<String, Value>) -> Vec<Arc<dyn Plugin>> {
+            vec![
+                Arc::new(StartPlugin),
+                Arc::new(AddPayloadBodyPlugin),
+                Arc::new(AddRadarPlugin),
+                Arc::new(ParserPlugin),
+            ]
+        }
+    }
+
+    #[test]
+    fn test_shortcut_basic() {
+        let shortcut = TestShortcut;
+        let plugins = shortcut.get_plugins(&HashMap::new());
+
+        assert_eq!(plugins.len(), 4);
+    }
+}
