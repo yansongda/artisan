@@ -22,6 +22,7 @@
 //! | [`Direction`] | 响应解析 trait | [`direction`] |
 //! | [`Packer`] | 序列化 trait | [`packer`] |
 //! | [`Shortcut`] | 插件预设 trait | [`shortcut`] |
+//! | [`Event`] / [`EventListener`] / [`EventDispatcher`] | 生命周期事件与监听 | [`event`] |
 //!
 //! # 内置插件
 //!
@@ -61,6 +62,7 @@ pub mod error;
 pub use directions::JsonDirection;
 pub mod artful;
 pub mod config;
+pub mod event;
 pub mod flow_ctrl;
 mod http;
 pub mod packer;
@@ -74,6 +76,7 @@ pub use artful::{Artful, ArtfulBuilder};
 pub use config::Config;
 pub use direction::{Destination, Direction, DirectionKind};
 pub use error::{ArtfulError, Result};
+pub use event::{Event, EventDispatcher, EventListener};
 pub use flow_ctrl::{FlowCtrl, Next};
 pub use packer::Packer;
 pub use packers::JsonPacker;
@@ -102,6 +105,7 @@ mod tests {
         assert_send_sync::<ClientOptions>();
         assert_send_sync::<JsonPacker>();
         assert_send_sync::<JsonDirection>();
+        assert_send_sync::<EventDispatcher>();
     }
 
     #[test]
