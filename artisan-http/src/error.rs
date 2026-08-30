@@ -5,6 +5,7 @@
 //! - HTTP 客户端/请求构建错误（ClientBuildError, `RequestBuildError`）
 //! - 序列化错误（JsonSerializeError, `JsonDeserializeError`)
 //! - 插件错误（PluginExecutionError）
+//! - 事件监听器错误（EventListenerError）
 //! - 参数错误（MissingParameter, `InvalidParameter`)
 //! - 响应解析错误（DirectionParseError）
 
@@ -45,6 +46,18 @@ pub enum ArtfulError {
     #[error("plugin execution failed: {plugin_name} - {message}")]
     PluginExecutionError {
         plugin_name: String,
+        message: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
+    /// 事件监听器执行失败
+    ///
+    /// 监听器返回 `Err` 时由 [`crate::event::EventDispatcher::dispatch`] 包装产生，
+    /// 首错即中止后续监听器并向主流程传播。
+    #[error("event listener failed: {listener_name} - {message}")]
+    EventListenerError {
+        listener_name: String,
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -146,6 +159,28 @@ mod tests {
         let source: Box<dyn std::error::Error + Send + Sync> = "inner cause".into();
         let err = ArtfulError::PluginExecutionError {
             plugin_name: "MyPlugin".to_string(),
+            message: "boom".to_string(),
+            source: Some(source),
+        };
+        assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn event_listener_error_display() {
+        let err = ArtfulError::EventListenerError {
+            listener_name: "MyListener".to_string(),
+            message: "boom".to_string(),
+            source: None,
+        };
+        assert_eq!(err.to_string(), "event listener failed: MyListener - boom");
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn event_listener_error_with_source() {
+        let source: Box<dyn std::error::Error + Send + Sync> = "inner cause".into();
+        let err = ArtfulError::EventListenerError {
+            listener_name: "MyListener".to_string(),
             message: "boom".to_string(),
             source: Some(source),
         };
