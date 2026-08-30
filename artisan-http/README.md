@@ -22,7 +22,7 @@ cargo add artisan-http
 
 ```toml
 [dependencies]
-artisan-http = "0.15.0"
+artisan-http = "0.16.0"
 ```
 
 ## Quick Start
@@ -199,6 +199,57 @@ impl Plugin for SignaturePlugin {
 ```
 
 **Error handling**: plugins return `Result<()>`; any plugin failure aborts the whole chain and propagates the error.
+
+### Events
+
+Each `Artful` instance carries a built-in event dispatcher: register listeners via the builder to observe the request lifecycle without writing a full plugin (zero cost when no listener is registered).
+
+```rust
+use artisan_http::{Artful, Event, EventListener};
+use std::sync::Arc;
+
+struct LoggingListener;
+
+impl EventListener for LoggingListener {
+    fn name(&self) -> &'static str {
+        "LoggingListener"
+    }
+
+    fn on_event(&self, event: &mut Event<'_>) -> artisan_http::Result<()> {
+        match event {
+            Event::ArtfulStart { params, plugins } => {
+                eprintln!("ArtfulStart: {} params, {} plugins", params.len(), plugins.len())
+            }
+            Event::HttpStart { rocket } => {
+                eprintln!("HttpStart: {} {}", rocket.config.method, rocket.config.url)
+            }
+            Event::HttpEnd { rocket } => {
+                eprintln!("HttpEnd: {:?}", rocket.destination_origin.as_ref().map(|r| r.status()))
+            }
+            Event::HttpError { error, .. } => eprintln!("HttpError: {error}"),
+            Event::ArtfulEnd { .. } => eprintln!("ArtfulEnd"),
+        }
+        Ok(()) // bypass listener: consume errors internally, never return Err
+    }
+}
+
+let artful = Artful::builder()
+    .event_listener(Arc::new(LoggingListener))
+    .build()?;
+```
+
+| Event | Fires | Mutability |
+|-------|-------|------------|
+| `ArtfulStart` | before the plugin chain starts | read-only |
+| `HttpStart` | before the HTTP request is sent (radar already built; mutate the request via the `*_mut` accessors on `rocket.radar`) | mutable |
+| `HttpEnd` | after a successful response, before parsing | read-only |
+| `HttpError` | when the HTTP request execution fails (the error still propagates) | read-only |
+| `ArtfulEnd` | after the chain succeeds, before returning the destination (may rewrite `rocket.destination`) | mutable |
+
+> - Listeners are **synchronous** and must be non-blocking — spawn heavy work yourself (`tokio::spawn`).
+> - A listener returning `Err` aborts the main flow (propagates as `EventListenerError`). Bypass listeners should consume errors internally and always return `Ok(())`.
+
+Try it: `cargo run -p artisan-http --example event`.
 
 ## Core Concepts
 

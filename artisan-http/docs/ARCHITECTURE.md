@@ -644,6 +644,63 @@ pub enum Destination {
 }
 ```
 
+### 3.4 事件系统
+
+实例级事件系统：`EventDispatcher` 随 `Artful` 实例持有（无全局状态），监听器经
+`Artful::builder().event_listener(...)` **追加式**注册（注册顺序即执行顺序，区别于
+config / customize / client 的覆盖语义）；未注册监听器时零开销（空表跳过注入与分发）。
+分发点内嵌于既有代码路径，不新增插件、不改插件链结构：
+
+```
+Artful::artful()
+   │
+   │  ① dispatch ArtfulStart        链启动前（只读观测 params / plugins）
+   ▼
+插件链: StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin
+                                                            │
+                       rocket.events = Some(Arc<EventDispatcher>)（实例注入传载）
+                                                            │
+                              ② dispatch HttpStart          execute 前（radar 已构建，可改请求）
+                              ③ rocket.client.execute(radar)
+                                   ├─ Ok  → ④ dispatch HttpEnd    解析前（只读）
+                                   └─ Err → ⑤ dispatch HttpError  错误照常传播（只读）
+   │
+   │  ⑥ dispatch ArtfulEnd          链成功后（可改写 rocket.destination）
+   ▼
+   return rocket.destination.unwrap_or_default()
+```
+
+**事件一览**（与 PHP 版 yansongda/artful 语义对齐，`HttpError` 为 Rust 新增）：
+
+| 事件 | 触发时机 | 可变性 | 对应 PHP artful |
+|------|---------|--------|----------------|
+| `ArtfulStart` | 插件链启动前 | 只读 | `Event\ArtfulStart` |
+| `HttpStart` | HTTP 请求即将发出（radar 已构建） | 可改 radar | `Event\HttpStart` |
+| `HttpEnd` | 请求成功返回、解析前 | 只读 | `Event\HttpEnd` |
+| `HttpError` | execute 失败（错误照常向上传播） | 只读 | —（Rust 新增） |
+| `ArtfulEnd` | 链成功后、返回 destination 前 | 可改写 destination | `Event\ArtfulEnd` |
+
+**触发矩阵**：
+
+| 场景 | ArtfulStart | HttpStart | HttpEnd | HttpError | ArtfulEnd |
+|------|:-:|:-:|:-:|:-:|:-:|
+| 正常请求 | ✅ | ✅ | ✅ | — | ✅ |
+| HTTP 执行失败 | ✅ | ✅ | — | ✅ | — |
+| `NoRequest` | ✅ | — | — | — | ✅ |
+| 插件/解析阶段失败 | ✅ | ✅（若已到达 Parser） | — | — | — |
+
+**错误语义**：监听器按注册顺序同步执行，任一监听器返回 `Err` → 立即停止后续监听器，
+错误包装为 `EventListenerError { listener_name, message, source }` 向上传播、中断主流程；
+仅需旁路观察（日志/metrics）的监听器应内部消化错误、恒返回 `Ok(())`。监听器必须
+**非阻塞**，耗时任务请自行 `tokio::spawn`。`HttpStart` 中修改请求须经 `rocket.radar`
+的 `*_mut` 访问器（radar 已构建，此时改 `rocket.config` 不影响本次请求）。
+
+**与插件链的关系**：HTTP 生命周期事件由 `ParserPlugin` 在请求执行点分发（复用既有
+代码路径），分发器经 `Rocket.events`（`Option<Arc<EventDispatcher>>`，默认 `None`）
+由 `Artful::artful()` 注入传载进插件链；`Artful` 生命周期事件在 `Artful::artful()`
+入口 / 出口分发。手动构造的 `Rocket`（`events` 为 `None`）不分发任何事件；
+`raw()` 完全跳过插件链与事件；`shortcut()` 内部走 `artful()`，完整经过事件路径。
+
 ---
 
 ## 四、内置插件
@@ -1094,9 +1151,15 @@ wiremock = { version = "~0.6.5" }
 - [x] 删除 `FlowCtrl::cease()`（与 `skip_rest()` 重复）
 - [x] 文档（README/AGENTS/ARCHITECTURE）与 crate 元数据全量同步
 
+### v0.16.0 - 事件系统（2026-08-31）
+
+- [x] `Event` / `EventListener` / `EventDispatcher` 事件核心类型（同步监听器、注册顺序即执行顺序、首错中止并包装 `EventListenerError`）
+- [x] 5 个生命周期事件：ArtfulStart / HttpStart / HttpEnd / HttpError / ArtfulEnd（PHP artful 4 事件语义对齐 + Rust 新增 HttpError，见 §3.4）
+- [x] `ArtfulBuilder::event_listener` 追加式注册；`Rocket.events` 传载；分发点内嵌 `Artful::artful()` 与 `ParserPlugin` 既有代码路径
+
 ### v0.2.0 - 增强
 
-- [ ] 事件系统（类似 PHP 版本）
+- [x] 事件系统（v0.16.0 已实现，见 §3.4 与 `docs/event-system.md`）
 - [ ] 错误处理插件
 - [ ] 更多内置插件（Retry、Cache 等）
 

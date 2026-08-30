@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-08-31
+
+### Added
+
+- 事件系统核心类型：`Event`（5 个生命周期事件的借用视图）、`EventListener`（对象安全同步监听器 trait）、`EventDispatcher`（`Clone` 共享监听器 `Arc`，实现 `Debug`/`Default`）；随 `Artful` 实例持有，无任何全局状态，未注册监听器时零开销
+- 5 个生命周期事件与触发时机：`ArtfulStart`（插件链启动前，只读观测 params/plugins）/ `HttpStart`（请求即将发出、radar 已构建，可经 `rocket.radar` 的 `*_mut` 访问器修改请求；此时改 `rocket.config` 不影响本次请求）/ `HttpEnd`（请求成功返回、响应解析前，只读）/ `HttpError`（仅 HTTP execute 失败触发，错误照常向上传播，只读；PHP 版无对应物）/ `ArtfulEnd`（插件链成功后、返回 destination 前，可改写 `rocket.destination`）；`NoRequest` 方向不触发 HTTP 事件，`MissingRequest` 不触发 `HttpError`
+- `ArtfulBuilder::event_listener(Arc<dyn EventListener>)`：追加式注册（注册顺序即执行顺序，区别于 config/customize/client 的覆盖语义）；监听器返回 `Err` 即中止后续监听器，错误包装为新错误变体 `EventListenerError { listener_name, message, source }` 向主流程传播
+- `Rocket` 新增 `events` 字段（`Option<Arc<EventDispatcher>>`，默认 `None`，由 `Artful::artful()` 注入传载进插件链；手动构造的 `Rocket` 不分发事件）
+
 ## [0.15.0] - 2026-08-30
 
 ### Added
