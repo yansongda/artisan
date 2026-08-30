@@ -37,3 +37,29 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    #[derive(Debug)]
+    struct NoContentTypePacker;
+
+    impl Packer for NoContentTypePacker {
+        fn pack(&self, _data: &HashMap<String, Value>) -> Result<String> {
+            Ok(String::new())
+        }
+
+        fn unpack(&self, _data: &str) -> Result<Value> {
+            Ok(Value::Null)
+        }
+    }
+
+    #[test]
+    fn default_content_type_is_none() {
+        // trait 默认实现不声明 Content-Type
+        assert_eq!(NoContentTypePacker.content_type(), None);
+    }
+}

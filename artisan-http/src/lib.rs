@@ -81,3 +81,30 @@ pub use plugin::Plugin;
 pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 pub use rocket::{ClientOptions, RequestOptions, Rocket, RocketConfig};
 pub use shortcut::Shortcut;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn core_types_are_send_sync() {
+        // 框架契约：核心类型可跨 tokio task 共享
+        assert_send_sync::<Artful>();
+        assert_send_sync::<Rocket>();
+        assert_send_sync::<FlowCtrl>();
+        assert_send_sync::<Config>();
+        assert_send_sync::<RocketConfig>();
+        assert_send_sync::<ClientOptions>();
+        assert_send_sync::<JsonPacker>();
+        assert_send_sync::<JsonDirection>();
+    }
+
+    #[test]
+    fn artful_default_construction_succeeds() {
+        let artful = Artful::new().unwrap();
+        assert!(artful.config().extra.is_empty());
+        let _client: &reqwest::Client = artful.client();
+    }
+}

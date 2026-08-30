@@ -74,3 +74,32 @@ fn fallback_client() -> reqwest::Client {
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_client_is_lazy_singleton() {
+        // 惰性初始化仅构建一次：两次调用返回同一实例
+        assert!(std::ptr::eq(default_client(), default_client()));
+    }
+
+    #[test]
+    fn build_client_with_all_options() {
+        let client = build_client(ClientOptions {
+            timeout: Some(1),
+            connect_timeout: Some(1),
+            pool_idle_timeout: Some(1),
+            pool_max_idle_per_host: Some(1),
+            user_agent: Some("unit-test-ua".to_string()),
+        });
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn build_client_with_default_options() {
+        // 未设置项走框架默认值兜底，构建仍应成功
+        assert!(build_client(ClientOptions::default()).is_ok());
+    }
+}

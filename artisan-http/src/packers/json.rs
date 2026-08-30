@@ -41,3 +41,54 @@ impl Packer for JsonPacker {
         Some("application/json")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_json_packer_pack() {
+        let packer = JsonPacker;
+        let mut data = HashMap::new();
+        data.insert("key".to_string(), json!("value"));
+
+        let result = packer.pack(&data).unwrap();
+        assert_eq!(result, r#"{"key":"value"}"#);
+    }
+
+    #[test]
+    fn test_json_packer_pack_empty() {
+        let packer = JsonPacker;
+        let data = HashMap::new();
+
+        let result = packer.pack(&data).unwrap();
+        assert_eq!(result, "{}");
+    }
+
+    #[test]
+    fn test_json_packer_unpack() {
+        let packer = JsonPacker;
+        let json = r#"{"key":"value"}"#;
+
+        let result = packer.unpack(json).unwrap();
+        assert_eq!(result["key"], json!("value"));
+    }
+
+    #[test]
+    fn test_json_packer_unpack_invalid() {
+        let packer = JsonPacker;
+        let invalid_json = "not json";
+
+        let result = packer.unpack(invalid_json);
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::error::ArtfulError::JsonDeserializeError { .. }
+        ));
+    }
+
+    #[test]
+    fn test_json_packer_content_type() {
+        assert_eq!(JsonPacker.content_type(), Some("application/json"));
+    }
+}

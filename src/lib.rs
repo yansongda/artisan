@@ -12,3 +12,13 @@
 
 #[cfg(feature = "http")]
 pub use artisan_http as http;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn http_facade_re_exports_artful() {
+        // facade re-export 冒烟：经 http 模块可正常构造 Artful
+        let artful = crate::http::Artful::new().unwrap();
+        assert!(artful.config().extra.is_empty());
+    }
+}
