@@ -47,15 +47,15 @@ cargo add artisan-http
 ```toml
 # Cargo.toml
 [dependencies]
-artisan = "~X.Y.Z"
+artisan = "X.Y.Z"
 
 # Without HTTP: pure facade
 [dependencies]
-artisan = { version = "~X.Y.Z", default-features = false }
+artisan = { version = "X.Y.Z", default-features = false }
 
 # Direct dependency: explicit HTTP
 [dependencies]
-artisan-http = "~X.Y.Z"
+artisan-http = "X.Y.Z"
 ```
 
 ## Commands
