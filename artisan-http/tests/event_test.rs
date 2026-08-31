@@ -41,6 +41,16 @@ impl Plugin for SetNoRequestPlugin {
     }
 }
 
+/// 不调用 next、直接返回 Ok 的插件（链视为成功，链尾核心动作不执行）
+struct ShortCircuitOkPlugin;
+
+#[async_trait]
+impl Plugin for ShortCircuitOkPlugin {
+    async fn assembly(&self, _rocket: &mut Rocket, _next: Next<'_>) -> artisan_http::Result<()> {
+        Ok(())
+    }
+}
+
 // ============ 测试监听器 ============
 
 /// 记录事件变体名的旁路监听器（恒返回 Ok）
@@ -363,4 +373,53 @@ async fn http_error_listener_failure_preserves_original_error() {
         }
         other => panic!("expected EventListenerError, got {other:?}"),
     }
+}
+
+// ============ 新契约回归测试（设计文档 §6 触发矩阵）============
+
+#[tokio::test]
+async fn empty_chain_dispatches_http_start_and_fails_fast() {
+    // 空插件链 + 默认方向（Json）：框架自动挂载的链尾核心动作必执行，
+    // radar 缺失 fail-fast 报 MissingRequest（HttpStart 已于 radar.take
+    // 之前分发；MissingRequest 属前置失败，不触发 HttpError）
+    let (records, recorder) = recorder_records();
+    let artful = artful_with_listeners(vec![recorder]);
+
+    let result = artful.artful(HashMap::new(), vec![]).await;
+
+    assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
+    assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "HttpStart"]);
+}
+
+#[tokio::test]
+async fn no_request_plugin_returns_none() {
+    // NoRequest 方向经插件写入（非空链，与 src/artful.rs 单测
+    // artful_no_request_returns_none 同形，走集成入口锁定契约）：
+    // 链尾核心动作直接返回，不发起请求、不触发任何 HTTP 事件
+    let (records, recorder) = recorder_records();
+    let artful = artful_with_listeners(vec![recorder]);
+
+    let result = artful
+        .artful(HashMap::new(), vec![Arc::new(SetNoRequestPlugin)])
+        .await
+        .unwrap();
+
+    assert!(matches!(result, Destination::None));
+    assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);
+}
+
+#[tokio::test]
+async fn plugin_not_calling_next_skips_http_events() {
+    // 插件不调用 next 直接返回 Ok：链视为成功（ArtfulEnd 照常分发），
+    // 但链尾核心动作不执行，无任何 HTTP 事件；destination 保持 None
+    let (records, recorder) = recorder_records();
+    let artful = artful_with_listeners(vec![recorder]);
+
+    let result = artful
+        .artful(HashMap::new(), vec![Arc::new(ShortCircuitOkPlugin)])
+        .await
+        .unwrap();
+
+    assert!(matches!(result, Destination::None));
+    assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);
 }
