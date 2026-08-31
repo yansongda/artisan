@@ -1,5 +1,5 @@
 use artisan_http::direction::Destination;
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
 use artisan_http::{
     Artful, ArtfulError, ClientOptions, Config, Packer, Plugin, Rocket, flow_ctrl::Next,
 };
@@ -53,7 +53,6 @@ async fn test_full_pipeline() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -90,7 +89,6 @@ async fn test_pipeline_with_payload() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -125,7 +123,6 @@ async fn default_chain_sets_content_type() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -167,7 +164,6 @@ async fn manual_content_type_not_overridden() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -231,7 +227,6 @@ async fn custom_packer_content_type() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -261,7 +256,6 @@ async fn fallback_branch_sets_content_type() {
             url: mock_server.uri() + "/ct-fallback",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -303,7 +297,6 @@ async fn client_timeout_takes_effect() {
             url: mock_server.uri() + "/slow",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await;
@@ -357,7 +350,6 @@ async fn lowercase_content_type_not_duplicated() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -408,7 +400,6 @@ async fn request_timeout_overrides_client_timeout() {
             url: mock_server.uri() + "/slow-override",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await;
@@ -421,8 +412,9 @@ async fn request_timeout_overrides_client_timeout() {
 
 #[tokio::test]
 async fn missing_request_when_no_radar_plugin() {
-    // 链中缺少 AddRadarPlugin（radar 为 None）→ ParserPlugin 报 MissingRequest
-    let plugins: Vec<Arc<dyn Plugin>> = vec![Arc::new(ParserPlugin)];
+    // 空链经 artful() 触发框架自动挂载的链尾核心动作：默认方向 Json，
+    // radar 缺失（无 AddRadarPlugin）仍报 MissingRequest
+    let plugins: Vec<Arc<dyn Plugin>> = vec![];
 
     let artful = Artful::new().unwrap();
     let result = artful.artful(HashMap::new(), plugins).await;
@@ -448,7 +440,6 @@ async fn invalid_json_response_errors() {
             url: mock_server.uri() + "/not-json",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -482,7 +473,6 @@ async fn default_user_agent_sent() {
             url: mock_server.uri() + "/default-ua",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -528,7 +518,6 @@ async fn preset_body_not_overridden() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -566,7 +555,6 @@ async fn empty_payload_no_content_type() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -619,7 +607,6 @@ async fn start_plugin_keeps_existing_payload() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -666,7 +653,6 @@ async fn custom_headers_forwarded() {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();

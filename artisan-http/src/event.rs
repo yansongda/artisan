@@ -8,7 +8,7 @@
 //! | 事件 | 触发时机 | 可变性 |
 //! |------|---------|--------|
 //! | [`Event::ArtfulStart`] | 插件链启动前 | 只读 |
-//! | [`Event::HttpStart`] | 到达 ParserPlugin 执行点、请求即将发出（正常链中 radar 已构建；缺 AddRadarPlugin 时 radar 为 `None`，事件仍触发） | 可修改请求 |
+//! | [`Event::HttpStart`] | 到达链尾核心动作执行点（`IgniteCore`，`artful()` 自动挂载）、请求即将发出（正常链中 radar 已构建；缺 AddRadarPlugin 时 radar 为 `None`，事件仍触发） | 可修改请求 |
 //! | [`Event::HttpEnd`] | HTTP 请求成功返回、响应解析之前（响应体不可读，见变体文档） | 只读 |
 //! | [`Event::HttpError`] | HTTP 请求执行失败（错误照常向上传播） | 只读 |
 //! | [`Event::ArtfulEnd`] | 插件链执行完毕、即将返回 destination | 可改写 destination |
@@ -75,7 +75,7 @@ pub enum Event<'a> {
         /// 即将执行的插件链
         plugins: &'a [Arc<dyn Plugin>],
     },
-    /// HTTP 请求即将发出（到达 ParserPlugin 执行点即触发）
+    /// HTTP 请求即将发出（到达链尾核心动作执行点即触发）
     ///
     /// 触发时正常插件链中 radar 已构建；链中缺 `AddRadarPlugin` 时
     /// `rocket.radar` 为 `None`（事件仍触发，随后主流程以
@@ -199,7 +199,7 @@ impl EventDispatcher {
                         listener_name: listener.name().to_string(),
                         message: err.to_string(),
                         source: Some(Box::new(err)),
-                        // 仅 HttpError 分发点会回填被顶替的原始错误（见 parser.rs）
+                        // 仅 HttpError 分发点会回填被顶替的原始错误（见 ignite.rs）
                         original: None,
                     });
                 }

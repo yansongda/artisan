@@ -13,8 +13,23 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use crate::Rocket;
 use crate::plugin::Plugin;
+
+/// 链尾核心动作 trait - 洋葱链固定终点
+///
+/// 终点无下一层：执行完毕即整个链路结束，返回值沿洋葱后向阶段回退传播。
+#[async_trait]
+pub(crate) trait CoreAction: Send + Sync {
+    /// 执行核心动作
+    ///
+    /// # Errors
+    ///
+    /// 返回错误当核心动作执行失败。
+    async fn run(&self, rocket: &mut Rocket) -> crate::Result<()>;
+}
 
 /// 洋葱模型流向控制器
 pub struct FlowCtrl {
@@ -23,6 +38,9 @@ pub struct FlowCtrl {
 
     /// 插件列表
     plugins: Vec<Arc<dyn Plugin>>,
+
+    /// 链尾核心动作（终点，一次性消费）
+    core: Option<Arc<dyn CoreAction>>,
 
     /// 是否已终止
     is_ceased: bool,
@@ -33,6 +51,7 @@ impl std::fmt::Debug for FlowCtrl {
         f.debug_struct("FlowCtrl")
             .field("cursor", &self.cursor)
             .field("plugins_count", &self.plugins.len())
+            .field("core", &self.core.is_some())
             .field("is_ceased", &self.is_ceased)
             .finish()
     }
@@ -45,8 +64,14 @@ impl FlowCtrl {
         Self {
             cursor: 0,
             plugins,
+            core: None,
             is_ceased: false,
         }
+    }
+
+    /// 设置链尾核心动作
+    pub(crate) fn set_core(&mut self, core: Arc<dyn CoreAction>) {
+        self.core = Some(core);
     }
 
     /// 调用下一层插件（洋葱穿透）
@@ -55,7 +80,17 @@ impl FlowCtrl {
     ///
     /// 返回错误当插件执行失败。
     pub async fn call_next(&mut self, rocket: &mut Rocket) -> crate::Result<()> {
-        if self.is_ceased || !self.has_next() {
+        if self.is_ceased {
+            return Ok(());
+        }
+
+        if !self.has_next() {
+            // 链尾：执行核心动作，返回值沿洋葱后向阶段回退传播；
+            // 未挂 core 时行为与纯插件链直用场景一致（静默结束）
+            if let Some(core) = self.core.take() {
+                return core.run(rocket).await;
+            }
+
             return Ok(());
         }
 
@@ -104,7 +139,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::collections::HashMap;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     struct TestPlugin {
         name: String,
@@ -251,6 +286,76 @@ mod tests {
         let result = ctrl.call_next(&mut rocket).await;
         assert!(result.is_ok());
         assert!(rocket.payload.is_empty());
+    }
+
+    /// 链尾核心动作测试替身：执行时向 payload 插入标记
+    struct MarkCore;
+
+    #[async_trait]
+    impl CoreAction for MarkCore {
+        async fn run(&self, rocket: &mut Rocket) -> crate::Result<()> {
+            rocket
+                .payload
+                .insert("core_ran".to_string(), serde_json::json!(true));
+
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_flow_ctrl_core_runs_at_tail() {
+        // 空插件链 + set_core：链尾核心动作执行
+        let mut ctrl = FlowCtrl::new(vec![]);
+        ctrl.set_core(Arc::new(MarkCore));
+        let mut rocket = Rocket::new(HashMap::new());
+
+        ctrl.call_next(&mut rocket).await.unwrap();
+
+        assert!(rocket.payload.contains_key("core_ran"));
+    }
+
+    #[tokio::test]
+    async fn test_flow_ctrl_core_skipped_after_skip_rest() {
+        // skip_rest 后核心动作不执行（主动中止优先于终点）
+        let mut ctrl = FlowCtrl::new(vec![]);
+        ctrl.set_core(Arc::new(MarkCore));
+        let mut rocket = Rocket::new(HashMap::new());
+
+        ctrl.skip_rest();
+
+        let result = ctrl.call_next(&mut rocket).await;
+        assert!(result.is_ok());
+        assert!(rocket.payload.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_flow_ctrl_core_runs_only_once() {
+        // 核心动作执行后再次 call_next：take 已消费，回落 Ok(())（幂等）
+        struct CountCore {
+            count: Arc<Mutex<usize>>,
+        }
+
+        #[async_trait]
+        impl CoreAction for CountCore {
+            async fn run(&self, _rocket: &mut Rocket) -> crate::Result<()> {
+                *self.count.lock().unwrap() += 1;
+
+                Ok(())
+            }
+        }
+
+        let count = Arc::new(Mutex::new(0));
+        let mut ctrl = FlowCtrl::new(vec![]);
+        ctrl.set_core(Arc::new(CountCore {
+            count: count.clone(),
+        }));
+        let mut rocket = Rocket::new(HashMap::new());
+
+        ctrl.call_next(&mut rocket).await.unwrap();
+        let result = ctrl.call_next(&mut rocket).await;
+
+        assert!(result.is_ok());
+        assert_eq!(*count.lock().unwrap(), 1);
     }
 
     #[tokio::test]

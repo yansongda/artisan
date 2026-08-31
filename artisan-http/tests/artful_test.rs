@@ -1,7 +1,7 @@
 use artisan_http::FlowCtrl;
 use artisan_http::Rocket;
 use artisan_http::direction::{Destination, DirectionKind};
-use artisan_http::plugins::{AddRadarPlugin, ParserPlugin, StartPlugin};
+use artisan_http::plugins::{AddRadarPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, ClientOptions, Config, Plugin, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -54,7 +54,6 @@ async fn test_artisan_basic() {
             url: mock_server.uri() + "/test",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -76,17 +75,39 @@ async fn test_artisan_with_response_direction() {
         .mount(&mock_server)
         .await;
 
-    let mut rocket = Rocket::new(HashMap::new());
-    rocket.config.method = reqwest::Method::GET;
-    rocket.config.url = mock_server.uri() + "/raw";
-    rocket.config.direction = DirectionKind::Response;
+    // set_core 为 crate 内部 API（集成测试不可见）：经 Artful::artful 入口触发
+    // 链尾核心动作，ConfigPlugin 设置 method/url/Response direction
+    struct ConfigPlugin {
+        method: reqwest::Method,
+        url: String,
+    }
 
-    let plugins: Vec<Arc<dyn Plugin>> = vec![Arc::new(AddRadarPlugin), Arc::new(ParserPlugin)];
+    #[async_trait]
+    impl Plugin for ConfigPlugin {
+        async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
+            rocket.config.method = self.method.clone();
+            rocket.config.url = self.url.clone();
+            rocket.config.direction = DirectionKind::Response;
+            next.call(rocket).await
+        }
+    }
 
-    let mut ctrl = FlowCtrl::new(plugins);
-    ctrl.call_next(&mut rocket).await.unwrap();
+    let artful = Artful::new().unwrap();
+    let result = artful
+        .artful(
+            HashMap::new(),
+            vec![
+                Arc::new(ConfigPlugin {
+                    method: reqwest::Method::GET,
+                    url: mock_server.uri() + "/raw",
+                }),
+                Arc::new(AddRadarPlugin),
+            ],
+        )
+        .await
+        .unwrap();
 
-    let response = match rocket.destination.expect("destination should be set") {
+    let response = match result {
         Destination::Response(response) => response,
         other => panic!("Expected Response destination, got {:?}", other),
     };
@@ -131,7 +152,6 @@ async fn test_artful_with_client_takes_effect() {
             url: mock_server.uri() + "/with-client",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
 
@@ -308,7 +328,6 @@ async fn test_http_404_response() {
             url: mock_server.uri() + "/not-found",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     // 404 不会返回错误，而是正常解析响应
@@ -340,7 +359,6 @@ async fn test_http_500_response() {
             url: mock_server.uri() + "/server-error",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     // 500 不会返回错误，而是正常解析响应
@@ -386,7 +404,6 @@ async fn test_http_timeout_response() {
             timeout: 1, // 1秒超时
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -408,7 +425,6 @@ async fn test_http_invalid_url() {
             url: "not-a-valid-url".to_string(),
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -426,7 +442,6 @@ async fn test_http_nonexistent_host() {
             url: "http://nonexistent-host-12345.local/test".to_string(),
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -468,7 +483,6 @@ async fn with_client_builder_applies_config_http() {
             url: mock_server.uri() + "/slow-builder",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await;
@@ -506,7 +520,6 @@ async fn with_client_builder_customization_overrides() {
             url: mock_server.uri() + "/customized",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
@@ -552,7 +565,6 @@ async fn builder_config_and_customize_takes_effect() {
             url: mock_server.uri() + "/builder-customize",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
@@ -600,7 +612,6 @@ async fn builder_client_injection_takes_effect() {
             url: mock_server.uri() + "/builder-client",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
@@ -628,7 +639,6 @@ async fn builder_default_build_succeeds() {
             url: mock_server.uri() + "/builder-default",
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();

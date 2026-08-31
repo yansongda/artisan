@@ -1,6 +1,6 @@
 use artisan_http::Rocket;
 use artisan_http::direction::{Destination, Direction, DirectionKind};
-use artisan_http::plugins::{AddRadarPlugin, ParserPlugin};
+use artisan_http::plugins::AddRadarPlugin;
 use artisan_http::{Artful, ArtfulError, Plugin, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -19,6 +19,23 @@ impl Plugin for MethodUrlPlugin {
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
         rocket.config.method = self.method.clone();
         rocket.config.url = self.url.clone();
+        next.call(rocket).await
+    }
+}
+
+/// 设置 method/url/direction 的插件（迁移至 Artful::artful 入口时配置 rocket.config）
+struct ConfigPlugin {
+    method: reqwest::Method,
+    url: String,
+    direction: DirectionKind,
+}
+
+#[async_trait]
+impl Plugin for ConfigPlugin {
+    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
+        rocket.config.method = self.method.clone();
+        rocket.config.url = self.url.clone();
+        rocket.config.direction = self.direction.clone();
         next.call(rocket).await
     }
 }
@@ -84,25 +101,26 @@ async fn custom_direction_executes_in_chain() {
         .mount(&mock_server)
         .await;
 
-    let plugins: Vec<Arc<dyn Plugin>> = vec![
-        Arc::new(MethodUrlPlugin {
-            method: reqwest::Method::GET,
-            url: mock_server.uri() + "/custom-direction",
-        }),
-        Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
-    ];
+    // set_core 为 crate 内部 API（集成测试不可见）：经 Artful::artful 入口触发链尾核心动作
+    let artful = Artful::new().unwrap();
+    let result = artful
+        .artful(
+            HashMap::new(),
+            vec![
+                Arc::new(ConfigPlugin {
+                    method: reqwest::Method::GET,
+                    url: mock_server.uri() + "/custom-direction",
+                    direction: DirectionKind::Custom(Arc::new(CustomJsonDirection {
+                        prefix: "prefix1".to_string(),
+                    })),
+                }),
+                Arc::new(AddRadarPlugin),
+            ],
+        )
+        .await
+        .unwrap();
 
-    let mut rocket = Rocket::new(HashMap::new());
-    rocket.config.direction = DirectionKind::Custom(Arc::new(CustomJsonDirection {
-        prefix: "prefix1".to_string(),
-    }));
-
-    let mut ctrl = artisan_http::FlowCtrl::new(plugins);
-    ctrl.call_next(&mut rocket).await.unwrap();
-
-    let destination = rocket.destination.expect("destination should be set");
-    if let Destination::Json(json) = destination {
+    if let Destination::Json(json) = result {
         assert_eq!(json["_custom_prefix"], "prefix1");
         assert_eq!(json["ok"], true);
     } else {
@@ -120,14 +138,21 @@ async fn custom_direction_error_propagates() {
         .mount(&mock_server)
         .await;
 
-    let mut rocket = Rocket::new(HashMap::new());
-    rocket.config.method = reqwest::Method::GET;
-    rocket.config.url = mock_server.uri() + "/failing-direction";
-    rocket.config.direction = DirectionKind::Custom(Arc::new(FailingDirection));
-
-    let plugins: Vec<Arc<dyn Plugin>> = vec![Arc::new(AddRadarPlugin), Arc::new(ParserPlugin)];
-    let mut ctrl = artisan_http::FlowCtrl::new(plugins);
-    let result = ctrl.call_next(&mut rocket).await;
+    // set_core 为 crate 内部 API（集成测试不可见）：经 Artful::artful 入口触发链尾核心动作
+    let artful = Artful::new().unwrap();
+    let result = artful
+        .artful(
+            HashMap::new(),
+            vec![
+                Arc::new(ConfigPlugin {
+                    method: reqwest::Method::GET,
+                    url: mock_server.uri() + "/failing-direction",
+                    direction: DirectionKind::Custom(Arc::new(FailingDirection)),
+                }),
+                Arc::new(AddRadarPlugin),
+            ],
+        )
+        .await;
 
     assert!(matches!(
         result.unwrap_err(),
@@ -153,7 +178,7 @@ async fn no_request_skips_http_and_keeps_chain() {
     #[async_trait]
     impl Plugin for MarkAfterParserPlugin {
         async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
-            // 后向阶段：ParserPlugin 已返回，若其发起了请求 radar 已被消费
+            // 前向阶段：链尾核心动作尚未执行，destination 必为 None
             assert!(rocket.destination.is_none());
             rocket
                 .payload
@@ -170,7 +195,6 @@ async fn no_request_skips_http_and_keeps_chain() {
             url: "http://nonexistent-host-12345.local/no-request".to_string(),
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
         Arc::new(MarkAfterParserPlugin),
     ];
 
@@ -204,25 +228,25 @@ async fn response_direction_consumes_origin() {
         .mount(&mock_server)
         .await;
 
-    let mut rocket = Rocket::new(HashMap::new());
-    rocket.config.method = reqwest::Method::GET;
-    rocket.config.url = mock_server.uri() + "/raw-take";
-    rocket.config.direction = DirectionKind::Response;
+    // set_core 为 crate 内部 API（集成测试不可见）：经 Artful::artful 入口触发链尾核心动作
+    let artful = Artful::new().unwrap();
+    let result = artful
+        .artful(
+            HashMap::new(),
+            vec![
+                Arc::new(ConfigPlugin {
+                    method: reqwest::Method::GET,
+                    url: mock_server.uri() + "/raw-take",
+                    direction: DirectionKind::Response,
+                }),
+                Arc::new(AddRadarPlugin),
+                Arc::new(AssertOriginTakenPlugin),
+            ],
+        )
+        .await
+        .unwrap();
 
-    let plugins: Vec<Arc<dyn Plugin>> = vec![
-        Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
-        Arc::new(AssertOriginTakenPlugin),
-    ];
-
-    let mut ctrl = artisan_http::FlowCtrl::new(plugins);
-    ctrl.call_next(&mut rocket).await.unwrap();
-
-    let response = match rocket
-        .destination
-        .take()
-        .expect("destination should be set")
-    {
+    let response = match result {
         Destination::Response(response) => response,
         other => panic!("Expected Response destination, got {:?}", other),
     };

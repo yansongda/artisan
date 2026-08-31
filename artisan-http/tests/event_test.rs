@@ -6,7 +6,7 @@
 
 use artisan_http::direction::Destination;
 use artisan_http::event::{Event, EventListener};
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -38,6 +38,16 @@ impl Plugin for SetNoRequestPlugin {
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> artisan_http::Result<()> {
         rocket.config.direction = artisan_http::DirectionKind::NoRequest;
         next.call(rocket).await
+    }
+}
+
+/// 不调用 next、直接返回 Ok 的插件（链视为成功，链尾核心动作不执行）
+struct ShortCircuitOkPlugin;
+
+#[async_trait]
+impl Plugin for ShortCircuitOkPlugin {
+    async fn assembly(&self, _rocket: &mut Rocket, _next: Next<'_>) -> artisan_http::Result<()> {
+        Ok(())
     }
 }
 
@@ -145,14 +155,14 @@ impl EventListener for HttpErrorFailingListener {
 
 // ============ 构造辅助 ============
 
-/// 最小插件链：StartPlugin → MethodUrlPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin
+/// 最小插件链：StartPlugin → MethodUrlPlugin → AddPayloadBodyPlugin → AddRadarPlugin
+/// （HTTP 执行由框架自动挂载的链尾核心动作完成）
 fn plugin_chain(method: reqwest::Method, url: String) -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(StartPlugin),
         Arc::new(MethodUrlPlugin { method, url }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ]
 }
 
@@ -237,7 +247,7 @@ async fn no_request_direction_no_http_events() {
         reqwest::Method::GET,
         "http://nonexistent-host-12345.local/no-request".to_string(),
     );
-    // SetNoRequestPlugin 置于 ParserPlugin 之前即可（此处放在 StartPlugin 之后）
+    // SetNoRequestPlugin 置于链尾核心动作之前即可（此处放在 StartPlugin 之后）
     plugins.insert(1, Arc::new(SetNoRequestPlugin));
 
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();
@@ -363,4 +373,53 @@ async fn http_error_listener_failure_preserves_original_error() {
         }
         other => panic!("expected EventListenerError, got {other:?}"),
     }
+}
+
+// ============ 新契约回归测试（设计文档 §6 触发矩阵）============
+
+#[tokio::test]
+async fn empty_chain_dispatches_http_start_and_fails_fast() {
+    // 空插件链 + 默认方向（Json）：框架自动挂载的链尾核心动作必执行，
+    // radar 缺失 fail-fast 报 MissingRequest（HttpStart 已于 radar.take
+    // 之前分发；MissingRequest 属前置失败，不触发 HttpError）
+    let (records, recorder) = recorder_records();
+    let artful = artful_with_listeners(vec![recorder]);
+
+    let result = artful.artful(HashMap::new(), vec![]).await;
+
+    assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
+    assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "HttpStart"]);
+}
+
+#[tokio::test]
+async fn no_request_plugin_returns_none() {
+    // NoRequest 方向经插件写入（非空链，与 src/artful.rs 单测
+    // artful_no_request_returns_none 同形，走集成入口锁定契约）：
+    // 链尾核心动作直接返回，不发起请求、不触发任何 HTTP 事件
+    let (records, recorder) = recorder_records();
+    let artful = artful_with_listeners(vec![recorder]);
+
+    let result = artful
+        .artful(HashMap::new(), vec![Arc::new(SetNoRequestPlugin)])
+        .await
+        .unwrap();
+
+    assert!(matches!(result, Destination::None));
+    assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);
+}
+
+#[tokio::test]
+async fn plugin_not_calling_next_skips_http_events() {
+    // 插件不调用 next 直接返回 Ok：链视为成功（ArtfulEnd 照常分发），
+    // 但链尾核心动作不执行，无任何 HTTP 事件；destination 保持 None
+    let (records, recorder) = recorder_records();
+    let artful = artful_with_listeners(vec![recorder]);
+
+    let result = artful
+        .artful(HashMap::new(), vec![Arc::new(ShortCircuitOkPlugin)])
+        .await
+        .unwrap();
+
+    assert!(matches!(result, Destination::None));
+    assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);
 }

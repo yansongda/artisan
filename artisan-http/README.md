@@ -31,7 +31,7 @@ artisan-http = "0.16.0"
 
 ```rust
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -66,7 +66,6 @@ async fn main() -> artisan_http::Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new()?;
@@ -84,7 +83,7 @@ async fn main() -> artisan_http::Result<()> {
 
 ```rust
 use artisan_http::{Artful, Shortcut, Plugin};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -106,7 +105,6 @@ impl Shortcut for MyApiShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
-            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -241,7 +239,7 @@ let artful = Artful::builder()
 | Event | Fires | Mutability |
 |-------|-------|------------|
 | `ArtfulStart` | before the plugin chain starts | read-only |
-| `HttpStart` | before the HTTP request is sent, at the ParserPlugin execution point (radar already built in a normal chain; `None` if the chain lacks `AddRadarPlugin` - the event still fires; mutate the request via the `*_mut` accessors on `rocket.radar`) | mutable |
+| `HttpStart` | before the HTTP request is sent, at the tail core action execution point (`IgniteCore`, mounted automatically by the framework; radar already built in a normal chain; `None` if the chain lacks `AddRadarPlugin` - the event still fires; mutate the request via the `*_mut` accessors on `rocket.radar`) | mutable |
 | `HttpEnd` | after a successful response, before parsing (response body is NOT readable - body consumption belongs to direction parsing; only status / headers are readable) | read-only |
 | `HttpError` | when the HTTP request execution fails (the error still propagates) | read-only |
 | `ArtfulEnd` | after the chain succeeds, before returning the destination (may rewrite `rocket.destination`) | mutable |
@@ -322,7 +320,10 @@ pub enum DirectionKind {
 | `StartPlugin` | Initializes `payload` from `params` |
 | `AddPayloadBodyPlugin` | Serializes the payload into the request body |
 | `AddRadarPlugin` | Builds the HTTP Request |
-| `ParserPlugin` | Sends the request and parses the response |
+
+> HTTP execution and response parsing are handled by the framework's built-in tail core action `IgniteCore`, mounted automatically by `Artful::artful` / `Artful::shortcut` - the plugin chain does not need and must not include a parsing plugin anymore. The minimal chain shape is `[StartPlugin, ..., AddRadarPlugin]`.
+>
+> **Migrating from 0.15.x**: remove the parsing plugin entry from your plugin chain (the type no longer exists, so old code fails to compile; see the CHANGELOG 0.16.0 entry for the old type name). Note: if any plugin in your chain was positioned **after** the old parsing plugin, its logic before `next.call` (forward phase) now runs **before** the request is executed (`destination` / `destination_origin` are still `None` and radar is not consumed; the backward phase is unaffected) - review such chains. See ARCHITECTURE.md §3.4 (Events) for details.
 
 ## Examples
 
