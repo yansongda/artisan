@@ -65,6 +65,7 @@ pub mod config;
 pub mod event;
 pub mod flow_ctrl;
 mod http;
+mod ignite;
 pub mod packer;
 pub mod packers;
 pub mod plugin;
