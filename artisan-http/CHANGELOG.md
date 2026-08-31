@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ArtfulBuilder::event_listener(Arc<dyn EventListener>)`：追加式注册（注册顺序即执行顺序，区别于 config/customize/client 的覆盖语义）；监听器返回 `Err` 即中止后续监听器，错误包装为新错误变体 `EventListenerError { listener_name, message, source, original }` 向主流程传播；`original` 仅在 HttpError 分发中监听器失败时填充（保留被顶替的 `RequestFailed`，错误链不丢失）
 - `Rocket` 新增 `events` 字段（`Option<Arc<EventDispatcher>>`，默认 `None`，由 `Artful::artful()` 注入传载进插件链；手动构造的 `Rocket` 不分发事件）
 
+### Changed
+
+- **BREAKING**: HTTP 执行与响应解析由 `ParserPlugin` 插件改为框架内置链尾核心动作 `IgniteCore`（对齐 artful PHP 的 `ignite()`），经 `Artful::artful` / `Artful::shortcut` 自动挂载：经入口的请求必然发起，`HttpStart` / `HttpEnd` / `HttpError` 事件必然触发（`NoRequest` 方向除外，语义不变）；插件链无需也不可再挂解析插件
+- **BREAKING**: 空插件链 + 默认方向（`Json`）下 fail-fast 返回 `MissingRequest`（链尾核心动作仍执行，radar 未构建即报错，不再静默返回 `Destination::None`；`NoRequest` 方向下行为不变）；直用 `FlowCtrl::new` 未挂 core 的场景行为完全不变
+- 迁移方式：从插件链中删除 `ParserPlugin` 一项即可。注意：链中位于原 `ParserPlugin` **之后**的插件，其 `next.call` 之前的逻辑（前向阶段）现运行于请求执行之前（destination / destination_origin 尚为 None、radar 未消费；后向阶段不受影响），此类链型需复核
+
+### Removed
+
+- **BREAKING**: 删除 `artisan_http::ParserPlugin` 公开导出（含 `artisan_http::plugins::ParserPlugin` 路径）；老代码编译失败为预期行为（编译期强制迁移，杜绝"旧链 + 新核心动作"的双执行事故）
+
 ## [0.15.0] - 2026-08-30
 
 ### Added

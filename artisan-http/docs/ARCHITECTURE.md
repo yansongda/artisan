@@ -288,9 +288,17 @@ impl Plugin for MyPlugin {
 
 ### 2.5 FlowCtrl - 流向控制器
 
-FlowCtrl 控制洋葱模型的执行流程，借鉴 [salvo](https://github.com/salvo-rs/salvo) 的设计。
+FlowCtrl 控制洋葱模型的执行流程，借鉴 [salvo](https://github.com/salvo-rs/salvo) 的设计，并升级为"洋葱链 + 固定终点"模型（对齐 Laravel Pipeline `then(ignite)` 与 reqwest-middleware "Client 恒为链尾终点"的既有实践）：插件链负责前向/后向处理，请求发起由框架内置链尾核心动作 `IgniteCore` 保证必然执行（见 §4.4），由 `Artful::artful` 自动挂载。
 
 ```rust
+/// 链尾核心动作 trait - 洋葱链固定终点（pub(crate)，不进公开 API）
+///
+/// 终点无下一层：执行完毕即整个链路结束，返回值沿洋葱后向阶段回退传播
+#[async_trait]
+pub(crate) trait CoreAction: Send + Sync {
+    async fn run(&self, rocket: &mut Rocket) -> Result<()>;
+}
+
 /// 洋葱模型流向控制器
 pub struct FlowCtrl {
     /// 当前执行位置
@@ -298,6 +306,9 @@ pub struct FlowCtrl {
     
     /// 插件列表（线性排列）
     plugins: Vec<Arc<dyn Plugin>>,
+    
+    /// 链尾核心动作（终点，一次性消费）
+    core: Option<Arc<dyn CoreAction>>,
     
     /// 是否已终止
     is_ceased: bool,
@@ -309,21 +320,36 @@ impl FlowCtrl {
         Self {
             cursor: 0,
             plugins,
+            core: None,
             is_ceased: false,
         }
     }
     
+    /// 设置链尾核心动作（pub(crate)，唯一挂载点为 `Artful::artful`）
+    pub(crate) fn set_core(&mut self, core: Arc<dyn CoreAction>) {
+        self.core = Some(core);
+    }
+    
     /// 调用下一层插件（洋葱穿透）
     pub async fn call_next(&mut self, rocket: &mut Rocket) -> Result<()> {
-        if self.is_ceased || !self.has_next() {
-            return Ok(());  // 正常结束
+        if self.is_ceased {
+            return Ok(());  // 已终止：优先返回，保证 skip_rest 抑制 core 执行
+        }
+        
+        if !self.has_next() {
+            // 链尾：执行核心动作，返回值沿洋葱后向阶段回退传播；
+            // 未挂 core 时行为与纯插件链直用场景一致（静默结束）
+            if let Some(core) = self.core.take() {
+                return core.run(rocket).await;
+            }
+            
+            return Ok(());
         }
         
         let plugin = self.plugins[self.cursor].clone();
         self.cursor += 1;
         
-        let next = Next { ctrl: self };
-        plugin.assembly(rocket, next).await  // 传播错误
+        plugin.assembly(rocket, Next { ctrl: self }).await  // 传播错误
     }
     
     /// 检查是否还有下一层
@@ -344,10 +370,17 @@ impl FlowCtrl {
 }
 ```
 
+**设计要点**：
+- **独立 `CoreAction` trait**：终点无 `next`，不复用 `Plugin` trait，也防止核心动作被误挂回插件链（杜绝双执行）
+- **`set_core` 为 `pub(crate)`**：唯一挂载点是 `Artful::artful()`，防止高级用户自造双入口
+- **`core.take()` 一次性消费**：终点只执行一次；插件双重调用 `next` 时第二次回落 `Ok(())`
+- **`skip_rest` 跳过 core**："主动中止流程"语义优先于终点执行
+- **空插件链 + 有 core**：core 直接执行（对齐 Laravel 空 pipes 时终点立即执行）
+
 **执行流程示意**:
 
 ```
-插件列表: [Start, Sign, AddRadar, Parser]
+插件列表: [Start, Sign, AddRadar]    链尾核心动作: IgniteCore（框架自动挂载）
 
 执行顺序（洋葱模型）:
 ┌─────────────────────────────────────────────────────────┐
@@ -363,10 +396,12 @@ impl FlowCtrl {
 │   │   │   │   │   ├─ 前向逻辑: 构建 Request              │
 │   │   │   │   │   ├─ next.call()                        │
 │   │   │   │   │   │   ┌─────────────────────────────────│
-│   │   │   │   │   │   │ Parser.assembly()               │
-│   │   │   │   │   │   │   ├─ 前向: 无                   │
+│   │   │   │   │   │   │ IgniteCore.run()（链尾终点）     │
+│   │   │   │   │   │   │   ├─ NoRequest? → 直接返回       │
+│   │   │   │   │   │   │   ├─ dispatch HttpStart         │
 │   │   │   │   │   │   │   ├─ HTTP 请求执行              │
-│   │   │   │   │   │   │   ├─ 后向: 解析响应             │
+│   │   │   │   │   │   │   ├─ dispatch HttpEnd           │
+│   │   │   │   │   │   │   └─ 解析响应 → destination     │
 │   │   │   │   │   │   └─────────────────────────────────│
 │   │   │   │   │   ├─ 后向逻辑: 无                       │
 │   │   │   │   └─────────────────────────────────────────│
@@ -405,7 +440,6 @@ impl Shortcut for QueryOrderShortcut {
             }),
             Arc::new(AddSignaturePlugin),
             Arc::new(AddRadarPlugin),
-            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -472,6 +506,8 @@ impl Artful {
         
         // 构建流向控制器
         let mut ctrl = FlowCtrl::new(plugins);
+        // 框架自动挂载链尾核心动作：请求必然发起、HTTP 生命周期事件必然触发
+        ctrl.set_core(Arc::new(crate::ignite::IgniteCore));
         
         // 启动洋葱流程，用 ? 传播错误
         ctrl.call_next(&mut rocket).await?;
@@ -656,16 +692,18 @@ Artful::artful()
    │
    │  ① dispatch ArtfulStart        链启动前（只读观测 params / plugins）
    ▼
-插件链: StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin
-                                                            │
-                       rocket.events = Some(Arc<EventDispatcher>)（实例注入传载）
-                                                            │
-                              ② dispatch HttpStart          execute 前（到达 Parser 执行点，正常链中 radar 已构建，可改请求）
-                              ③ rocket.client.execute(radar)
-                                   ├─ Ok  → ④ dispatch HttpEnd    解析前（只读，响应体不可读）
-                                   └─ Err → ⑤ dispatch HttpError  错误照常传播（只读）
+插件链: StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin
+                                       │
+           rocket.events = Some(Arc<EventDispatcher>)（实例注入传载）
+                                       │
+              ② 链尾核心动作 IgniteCore（框架自动挂载，见 §4.4）
+                                       │
+                              ③ dispatch HttpStart          execute 前（正常链中 radar 已构建，可改请求）
+                              ④ rocket.client.execute(radar)
+                                   ├─ Ok  → ⑤ dispatch HttpEnd    解析前（只读，响应体不可读）
+                                   └─ Err → ⑥ dispatch HttpError  错误照常传播（只读）
    │
-   │  ⑥ dispatch ArtfulEnd          链成功后（可改写 rocket.destination）
+   │  ⑦ dispatch ArtfulEnd          链成功后（可改写 rocket.destination）
    ▼
    return rocket.destination.unwrap_or_default()
 ```
@@ -675,35 +713,38 @@ Artful::artful()
 | 事件 | 触发时机 | 可变性 | 对应 PHP artful |
 |------|---------|--------|----------------|
 | `ArtfulStart` | 插件链启动前 | 只读 | `Event\ArtfulStart` |
-| `HttpStart` | 到达 ParserPlugin 执行点、请求即将发出（正常链中 radar 已构建；缺 `AddRadarPlugin` 时 radar 为 `None`，事件仍触发） | 可改 radar | `Event\HttpStart` |
+| `HttpStart` | 到达链尾核心动作执行点、请求即将发出（正常链中 radar 已构建；缺 `AddRadarPlugin` 时 radar 为 `None`，事件仍触发） | 可改 radar | `Event\HttpStart` |
 | `HttpEnd` | 请求成功返回、解析前（响应体不可读：body 消费权属于 direction 解析，仅可读 status / headers） | 只读 | `Event\HttpEnd` |
 | `HttpError` | execute 失败（错误照常向上传播） | 只读 | —（Rust 新增） |
 | `ArtfulEnd` | 链成功后、返回 destination 前 | 可改写 destination | `Event\ArtfulEnd` |
 
-**触发矩阵**：
+**触发矩阵**（契约：监听器可无条件依赖下表）：
 
 | 场景 | ArtfulStart | HttpStart | HttpEnd | HttpError | ArtfulEnd |
 |------|:-:|:-:|:-:|:-:|:-:|
 | 正常请求 | ✅ | ✅ | ✅ | — | ✅ |
 | HTTP 执行失败 | ✅ | ✅ | — | ✅ | — |
 | `NoRequest` | ✅ | — | — | — | ✅ |
-| 插件失败（execute 前） | ✅ | ✅（若已到达 Parser） | — | — | — |
+| 插件失败（前向阶段） | ✅ | — | — | — | — |
+| 插件不调 next 返 Ok | ✅ | — | — | — | ✅ |
+| 链尾缺 radar | ✅ | ✅ | — | — | — |
 | 解析阶段失败（execute 成功后） | ✅ | ✅ | ✅ | — | — |
 
 **错误语义**：监听器按注册顺序同步执行，任一监听器返回 `Err` → 立即停止后续监听器，
 错误包装为 `EventListenerError { listener_name, message, source, original }` 向上
 传播、中断主流程；仅需旁路观察（日志/metrics）的监听器应内部消化错误、恒返回
 `Ok(())`。监听器必须**非阻塞**，耗时任务请自行 `tokio::spawn`。`HttpStart` 中修改
-请求须经 `rocket.radar` 的 `*_mut` 访问器（到达 ParserPlugin 执行点时正常链中 radar
+请求须经 `rocket.radar` 的 `*_mut` 访问器（到达链尾核心动作执行点时正常链中 radar
 已构建，此时改 `rocket.config` 不影响本次请求；链中缺 `AddRadarPlugin` 时 radar
 为 `None`，事件仍触发）。特殊地，`HttpError` 分发中监听器自身失败时，原始
 `RequestFailed` 保留在 `EventListenerError.original` 字段（错误链不丢失）。
 
-**与插件链的关系**：HTTP 生命周期事件由 `ParserPlugin` 在请求执行点分发（复用既有
-代码路径），分发器经 `Rocket.events`（`Option<Arc<EventDispatcher>>`，默认 `None`）
-由 `Artful::artful()` 注入传载进插件链；`Artful` 生命周期事件在 `Artful::artful()`
-入口 / 出口分发。手动构造的 `Rocket`（`events` 为 `None`）不分发任何事件；
-`raw()` 完全跳过插件链与事件；`shortcut()` 内部走 `artful()`，完整经过事件路径。
+**与插件链的关系**：HTTP 生命周期事件由框架内置链尾核心动作 `IgniteCore`
+（`Artful::artful()` 自动挂载，见 §4.4）在请求执行点分发，分发器经 `Rocket.events`
+（`Option<Arc<EventDispatcher>>`，默认 `None`）由 `Artful::artful()` 注入传载进插件
+链；`Artful` 生命周期事件在 `Artful::artful()` 入口 / 出口分发。手动构造的 `Rocket`
+（`events` 为 `None`）不分发任何事件；`raw()` 完全跳过插件链与事件；`shortcut()`
+内部走 `artful()`，完整经过事件路径。
 
 ---
 
@@ -807,62 +848,100 @@ impl Plugin for AddRadarPlugin {
 }
 ```
 
-### 4.4 ParserPlugin - 解析响应
+### 4.4 IgniteCore - 链尾核心动作
+
+链尾核心动作是洋葱链的固定终点（对齐 artful PHP 的 `ignite()`）：执行 HTTP 请求并解析响应。它不是插件，实现 `pub(crate)` 的 `CoreAction` trait（终点无下一层，不复用 `Plugin`），由 `Artful::artful()` 自动挂载（`ctrl.set_core(Arc::new(IgniteCore))`），用户插件链无需也不可再挂解析插件。
 
 ```rust
-/// 解析响应插件 - 执行 HTTP 请求并解析结果
-pub struct ParserPlugin;
+/// 链尾核心动作 trait - 洋葱链固定终点（pub(crate)，不进公开 API）
+#[async_trait]
+pub(crate) trait CoreAction: Send + Sync {
+    async fn run(&self, rocket: &mut Rocket) -> Result<()>;
+}
+
+/// 链尾核心动作 - 执行 HTTP 请求并解析响应
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct IgniteCore;
 
 #[async_trait]
-impl Plugin for ParserPlugin {
-    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> Result<()> {
-        // NoRequest - 不发起请求
-        if rocket.config.direction == DirectionKind::NoRequest {
-            return next.call(rocket).await;
+impl CoreAction for IgniteCore {
+    async fn run(&self, rocket: &mut Rocket) -> Result<()> {
+        // NoRequest - 不发起请求，直接结束（不触发任何 HTTP 事件）
+        if let DirectionKind::NoRequest = rocket.config.direction {
+            return Ok(());
         }
-        
-        // 检查 radar，不存在则返回 MissingRequest 错误
-        let request = rocket.radar.take()
-            .ok_or(ArtfulError::MissingRequest)?;
-        
-        // 使用实例注入的客户端发送请求，失败则返回 RequestFailed 错误
-        let response = rocket.client.execute(request).await
-            .map_err(ArtfulError::RequestFailed)?;
-        rocket.destination_origin = Some(response);
-        
-        // 解析响应
-        let direction_kind = rocket.config.direction.clone();
-        let destination = match direction_kind {
-            DirectionKind::Json => {
-                // Json 从 Response body 解析 JSON
-                Json.parse(rocket).await?
+
+        // 先克隆分发器 Arc 再分发，规避 rocket 的自借用冲突
+        let events = rocket.events.clone();
+
+        // HttpStart：请求即将发出（radar 尚未被消费，监听器可见并可修改 radar）
+        if let Some(events) = &events {
+            events.dispatch(Event::HttpStart { rocket: &mut *rocket })?;
+        }
+
+        // 发送 HTTP 请求（radar 缺失返回 MissingRequest）
+        let response = rocket
+            .client
+            .execute(rocket.radar.take().ok_or(ArtfulError::MissingRequest)?)
+            .await
+            .map_err(ArtfulError::RequestFailed);
+
+        match response {
+            Ok(response) => {
+                rocket.destination_origin = Some(response);
+
+                // HttpEnd：请求成功返回、响应解析之前
+                if let Some(events) = &events {
+                    events.dispatch(Event::HttpEnd { rocket: &*rocket })?;
+                }
+
+                // 解析响应
+                let destination = match &rocket.config.direction {
+                    DirectionKind::Json => JsonDirection.parse(rocket).await?,
+                    DirectionKind::Response => rocket
+                        .destination_origin
+                        .take()
+                        .map(Destination::Response)
+                        .ok_or(ArtfulError::MissingResponse)?,
+                    DirectionKind::Custom(direction) => direction.clone().parse(rocket).await?,
+                    DirectionKind::NoRequest => Destination::None,
+                };
+
+                rocket.destination = Some(destination);
             }
-            DirectionKind::Response => {
-                // 返回原始 Response
-                rocket.destination_origin.take()
-                    .map(Destination::Response)
-                    .ok_or(ArtfulError::MissingResponse)?
+            Err(err) => {
+                // HttpError：仅 execute 失败触发（MissingRequest 属请求前置失败，不触发）；
+                // 监听器自身失败时，原始 RequestFailed 保留在 original 字段（错误链不丢失）；
+                // 否则错误照常传播
+                if let Some(events) = &events {
+                    if let Err(mut listener_err) = events.dispatch(Event::HttpError {
+                        rocket: &*rocket,
+                        error: &err,
+                    }) {
+                        if let ArtfulError::EventListenerError { original, .. } = &mut listener_err
+                        {
+                            *original = Some(Box::new(err));
+                        }
+
+                        return Err(listener_err);
+                    }
+                }
+
+                return Err(err);
             }
-            DirectionKind::Custom(d) => {
-                d.parse(rocket).await?
-            }
-            DirectionKind::NoRequest => {
-                Destination::None
-            }
-        };
-        
-        rocket.destination = Some(destination);
-        
-        next.call(rocket).await
+        }
+
+        Ok(())
     }
 }
 ```
 
 **错误处理说明**：
-- `MissingRequest` - radar 未构建（AddRadarPlugin 未执行或失败）
-- `MissingResponse` - destination_origin 不存在
+- `MissingRequest` - radar 未构建（AddRadarPlugin 未执行或失败）；属请求前置失败，不触发 `HttpError`
+- `MissingResponse` - `Response` 方向下 destination_origin 不存在
 - `RequestFailed` - HTTP 请求失败
-- `JsonSerializeError` - JSON 解析失败
+- `JsonSerializeError` / `JsonDeserializeError` - 序列化/解析失败
+- `EventListenerError` - 事件监听器失败（中断主流程；`HttpError` 分发中监听器失败时，原始 `RequestFailed` 保留在其 `original` 字段）
 
 ---
 
@@ -896,7 +975,7 @@ let artful = Artful::builder()
 
 ```rust
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -933,7 +1012,6 @@ async fn main() -> artisan_http::Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(params, plugins).await?;
@@ -950,7 +1028,7 @@ async fn main() -> artisan_http::Result<()> {
 
 ```rust
 use artisan_http::{Artful, Shortcut, Plugin};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -971,7 +1049,6 @@ impl Shortcut for MyApiShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
-            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -1017,8 +1094,8 @@ impl Plugin for SignaturePlugin {
 let result = artful.artful(params, plugins).await;
 // result: Err(ArtfulError::RequestFailed(...))
 
-// radar 未构建
-let result = artful.artful(params, vec![Arc::new(ParserPlugin)]).await;
+// radar 未构建（空插件链时链尾核心动作仍执行，发现 radar 缺失即 fail-fast）
+let result = artful.artful(params, vec![]).await;
 // result: Err(ArtfulError::MissingRequest)
 
 // JSON 解析失败
@@ -1045,7 +1122,8 @@ artisan-http/
 │   │
 │   ├── artful.rs               # Artful 主入口（实例类型）
 │   ├── rocket.rs               # Rocket + RocketConfig + ClientOptions/RequestOptions
-│   ├── flow_ctrl.rs            # FlowCtrl 流向控制 + Next 闭包
+│   ├── flow_ctrl.rs            # FlowCtrl 流向控制 + Next 闭包 + CoreAction
+│   ├── ignite.rs               # IgniteCore 链尾核心动作（execute + parse）
 │   ├── config.rs               # Config（http: ClientOptions + extra）
 │   ├── error.rs                # ArtfulError 错误定义（英文 Display）
 │   │
@@ -1054,7 +1132,6 @@ artisan-http/
 │   │   ├── mod.rs              # 导出所有内置插件
 │   │   ├── start.rs            # StartPlugin
 │   │   ├── add_radar.rs        # AddRadarPlugin
-│   │   ├── parser.rs           # ParserPlugin
 │   │   └── add_payload_body.rs # AddPayloadBodyPlugin
 │   │
 │   ├── shortcut.rs             # Shortcut trait
@@ -1098,10 +1175,11 @@ artisan-http/
 | `src/lib.rs` | 框架入口 | 导出公共 API |
 | `src/artful.rs` | 主入口 | `Artful` struct（实例类型） |
 | `src/rocket.rs` | 请求载体 + 配置 | `Rocket`, `RocketConfig`, `ClientOptions`, `RequestOptions` |
-| `src/flow_ctrl.rs` | 流向控制器 | `FlowCtrl`, `Next` |
+| `src/flow_ctrl.rs` | 流向控制器 | `FlowCtrl`, `Next`（`CoreAction` 为 `pub(crate)`） |
+| `src/ignite.rs` | 链尾核心动作 | `IgniteCore`（`pub(crate)`，由 `Artful::artful()` 自动挂载） |
 | `src/config.rs` | 框架配置 | `Config` |
 | `src/plugin.rs` | 插件 trait | `Plugin` trait |
-| `src/plugins/` | 内置插件 | `StartPlugin`, `AddRadarPlugin`, `ParserPlugin`, `AddPayloadBodyPlugin` |
+| `src/plugins/` | 内置插件 | `StartPlugin`, `AddRadarPlugin`, `AddPayloadBodyPlugin`（HTTP 执行与解析由链尾核心动作 `IgniteCore` 承担，见 §4.4） |
 | `src/shortcut.rs` | 快捷方式 trait | `Shortcut` trait |
 | `src/direction.rs` | 解析策略 trait | `Direction`, `DirectionKind`, `Destination` |
 | `src/directions/` | 内置解析器 | `Json` |
@@ -1136,7 +1214,7 @@ wiremock = { version = "~0.6.5" }
 
 - [x] 核心架构设计
 - [x] 核心架构实现（Rocket, FlowCtrl, Plugin）
-- [x] 内置插件（Start, AddPayloadBody, AddRadar, Parser, Log）
+- [x] 内置插件（Start, AddPayloadBody, AddRadar, Log）+ 链尾核心动作 IgniteCore
 - [x] reqwest HTTP 客户端单例封装
 - [x] JSON Packer
 - [x] Direction 解析策略（Json, Response 等）
@@ -1159,7 +1237,7 @@ wiremock = { version = "~0.6.5" }
 
 - [x] `Event` / `EventListener` / `EventDispatcher` 事件核心类型（同步监听器、注册顺序即执行顺序、首错中止并包装 `EventListenerError`）
 - [x] 5 个生命周期事件：ArtfulStart / HttpStart / HttpEnd / HttpError / ArtfulEnd（PHP artful 4 事件语义对齐 + Rust 新增 HttpError，见 §3.4）
-- [x] `ArtfulBuilder::event_listener` 追加式注册；`Rocket.events` 传载；分发点内嵌 `Artful::artful()` 与 `ParserPlugin` 既有代码路径
+- [x] `ArtfulBuilder::event_listener` 追加式注册；`Rocket.events` 传载；分发点内嵌 `Artful::artful()`，HTTP 事件分发点位于框架内置链尾核心动作 `IgniteCore`（见 §4.4）
 
 ### v0.2.0 - 增强
 

@@ -36,12 +36,12 @@ src/
 ├── lib.rs           # Public API exports
 ├── artful.rs        # Artful struct (instance: new/with_config/with_client_builder/with_client + builder(), artful, shortcut, raw)
 ├── rocket.rs        # Rocket + RocketConfig + ClientOptions/RequestOptions
-├── flow_ctrl.rs     # FlowCtrl + Next (onion control)
+├── flow_ctrl.rs     # FlowCtrl + Next + CoreAction (onion control)
+├── ignite.rs        # IgniteCore (链尾核心动作: execute + parse)
 ├── plugin.rs        # Plugin trait (async_trait)
 ├── plugins/         # Built-in plugins
 │   ├── start.rs     # StartPlugin (init payload)
 │   ├── add_radar.rs # AddRadarPlugin (build Request, fallback CT header)
-│   ├── parser.rs    # ParserPlugin (execute + parse)
 │   └── add_payload_body.rs
 ├── direction.rs     # Direction trait + DirectionKind + Destination
 ├── directions/      # Built-in parsers (JsonDirection)

@@ -31,7 +31,7 @@ artisan-http = "0.16.0"
 
 ```rust
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -66,7 +66,6 @@ async fn main() -> artisan_http::Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new()?;
@@ -84,7 +83,7 @@ async fn main() -> artisan_http::Result<()> {
 
 ```rust
 use artisan_http::{Artful, Shortcut, Plugin};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -106,7 +105,6 @@ impl Shortcut for MyApiShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
-            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -240,7 +238,7 @@ let artful = Artful::builder()
 | 事件 | 触发时机 | 可变性 |
 |------|---------|--------|
 | `ArtfulStart` | 插件链启动前 | 只读 |
-| `HttpStart` | HTTP 请求即将发出、到达 ParserPlugin 执行点（正常链中 radar 已构建；链中缺 `AddRadarPlugin` 时为 `None`，事件仍触发；须经 `rocket.radar` 的 `*_mut` 访问器修改请求） | 可变 |
+| `HttpStart` | HTTP 请求即将发出、到达链尾核心动作执行点（`IgniteCore`，由框架自动挂载；正常链中 radar 已构建；链中缺 `AddRadarPlugin` 时为 `None`，事件仍触发；须经 `rocket.radar` 的 `*_mut` 访问器修改请求） | 可变 |
 | `HttpEnd` | 请求成功返回、解析前（响应体不可读：body 消费权属于 direction 解析，仅可读 status / headers） | 只读 |
 | `HttpError` | HTTP 请求执行失败（错误照常向上传播） | 只读 |
 | `ArtfulEnd` | 链成功后、返回 destination 前（可改写 `rocket.destination`） | 可变 |
@@ -321,7 +319,10 @@ pub enum DirectionKind {
 | `StartPlugin` | 将 params 初始化到 payload |
 | `AddPayloadBodyPlugin` | 将 payload 序列化为请求体 |
 | `AddRadarPlugin` | 构建 HTTP Request |
-| `ParserPlugin` | 执行请求并解析响应 |
+
+> HTTP 执行与响应解析由框架内置链尾核心动作 `IgniteCore` 自动完成（经 `Artful::artful` / `Artful::shortcut` 自动挂载），插件链无需也不可再挂解析插件。插件链最小形态为 `[StartPlugin, ..., AddRadarPlugin]`。
+>
+> **从 0.15.x 迁移**：从插件链中删除解析插件一项即可（该类型已删除，老代码将编译失败；旧类型名见 CHANGELOG 0.16.0 条目）。注意：链中位于原解析插件之后的插件，其 `next.call` 之前的逻辑（前向阶段）现运行于请求执行之前（destination / destination_origin 尚为 None、radar 未消费；后向阶段不受影响），此类链型需复核。详见 ARCHITECTURE.md §3.4 事件系统。
 
 ## 示例
 

@@ -98,7 +98,7 @@ let artful = Artful::builder()
 | Event | Fires | Mutability |
 |-------|-------|------------|
 | `ArtfulStart` | before the plugin chain starts | read-only |
-| `HttpStart` | before the HTTP request is sent, at the ParserPlugin execution point (radar already built in a normal chain; `None` if the chain lacks `AddRadarPlugin` - the event still fires; mutate the request via the `*_mut` accessors on `rocket.radar`) | mutable |
+| `HttpStart` | before the HTTP request is sent, at the tail core action execution point (`IgniteCore`, mounted automatically by the framework; radar already built in a normal chain; `None` if the chain lacks `AddRadarPlugin` - the event still fires; mutate the request via the `*_mut` accessors on `rocket.radar`) | mutable |
 | `HttpEnd` | after a successful response, before parsing (response body is NOT readable - body consumption belongs to direction parsing; only status / headers are readable) | read-only |
 | `HttpError` | when the HTTP request execution fails (the error still propagates) | read-only |
 | `ArtfulEnd` | after the chain succeeds, before returning the destination (may rewrite `rocket.destination`) | mutable |

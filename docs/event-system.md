@@ -1,18 +1,20 @@
 # 技术设计文档:artisan-http 事件系统(v0.16.0)
 
+> **2026-09-01 演进注记**:0.16.0 发布前,事件分发点从用户手动挂载的旧解析插件(类型已删除,旧名见 artisan-http/CHANGELOG.md 0.16.0 条目)迁移至框架内置链尾核心动作 `IgniteCore`,本文插入点/触发矩阵描述已同步。
+
 > **时间**:2026-08-30
 > **作者**:GLM-5.3-Flash + yansongda
-> **状态**:经过人工审核确认(2026-08-30,对话内批准;三项决策点均按建议确认,见文末决策记录)。2026-08-31 依审查意见修订:ParserPlugin 路径纠正、reqwest 访问器契约由"推断"升级为"已验证"、CHANGELOG 纳入范围;方案方向未变。同日 plan-reviewer 审查通过(0 BLOCKER / 0 MAJOR / 6 MINOR),依 MINOR 意见补充 §3.3 HttpError 分发中监听器失败的错误链语义说明。再次依 PR 审查意见修订:触发矩阵拆分插件/解析失败两行、HttpStart 触发条件精确为"到达 ParserPlugin 执行点"、`EventListenerError` 增加 `original` 字段保留被顶替的原始错误、HttpEnd 响应体不可读的限制入档
+> **状态**:经过人工审核确认(2026-08-30,对话内批准;三项决策点均按建议确认,见文末决策记录)。2026-08-31 依审查意见修订:解析插件路径纠正、reqwest 访问器契约由"推断"升级为"已验证"、CHANGELOG 纳入范围;方案方向未变。同日 plan-reviewer 审查通过(0 BLOCKER / 0 MAJOR / 6 MINOR),依 MINOR 意见补充 §3.3 HttpError 分发中监听器失败的错误链语义说明。再次依 PR 审查意见修订:触发矩阵拆分插件/解析失败两行、HttpStart 触发条件精确为"到达链尾核心动作执行点"、`EventListenerError` 增加 `original` 字段保留被顶替的原始错误、HttpEnd 响应体不可读的限制入档
 
 ## 1. 背景与问题
 
-**现状**:artisan-http v0.15.0 是洋葱模型 HTTP 客户端框架,扩展点唯一入口是 `Plugin` trait(`artisan-http/src/plugin.rs:33`),内置插件链为 `StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin`。其 PHP 姊妹项目 yansongda/artful 具有完整事件系统(4 个生命周期事件 + PSR-14 分发器),本仓库 `artisan-http/docs/ARCHITECTURE.md` 将事件列为后续规划,尚未实现。
+**现状**:artisan-http v0.15.0 是洋葱模型 HTTP 客户端框架,扩展点唯一入口是 `Plugin` trait(`artisan-http/src/plugin.rs:33`),内置插件链为 `StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin`(0.16.0 起 HTTP 执行由框架内置链尾核心动作 `IgniteCore` 承担,见文首演进注记)。其 PHP 姊妹项目 yansongda/artful 具有完整事件系统(4 个生命周期事件 + PSR-14 分发器),本仓库 `artisan-http/docs/ARCHITECTURE.md` 将事件列为后续规划,尚未实现。
 
 **困境**:
 
 1. **无可观测性挂点**:用户要做请求日志、metrics、审计,必须编写完整 Plugin 并理解洋葱摆放位置,门槛高;且插件返回 `Err` 会直接中断主流程,不适合"旁路观察"语义。
 2. **与 PHP 生态不对齐**:yansongda/pay 等下游生态依赖 artful 事件做横切逻辑,Rust 版缺少对应能力,影响迁移与心智一致。
-3. **HTTP 执行失败无通知**:当前 `ParserPlugin` 请求失败(网络错误等)只有返回值错误一条通道,无法旁路感知(如上报失败率)。
+3. **HTTP 执行失败无通知**:当前 HTTP 执行失败(网络错误等)只有返回值错误一条通道,无法旁路感知(如上报失败率)。
 
 **目标**(约束条件):
 
@@ -24,7 +26,7 @@
 
 ## 2. 整体方案
 
-**核心思路**:**事件分发器作为 `Artful` 实例字段,5 个分发点内嵌于框架既有代码路径——`Artful::artful()` 入口/出口分发 Artful 事件,`ParserPlugin` 请求执行点前后分发 HTTP 事件,分发器经 `Rocket` 传载进插件链**。不新增插件、不改插件链结构、不改任何既有函数签名。
+**核心思路**:**事件分发器作为 `Artful` 实例字段,5 个分发点内嵌于框架既有代码路径——`Artful::artful()` 入口/出口分发 Artful 事件,框架内置链尾核心动作 `IgniteCore` 请求执行点前后分发 HTTP 事件,分发器经 `Rocket` 传载进插件链**。不新增插件、不改插件链结构、不改任何既有函数签名。
 
 ```
 Artful { config, client, events: EventDispatcher }
@@ -32,17 +34,18 @@ Artful { config, client, events: EventDispatcher }
    │ artful(params, plugins)                       [artful.rs:134]
    │   ① dispatch ArtfulStart { params, plugins }  ← 链启动前,观测
    ▼
-FlowCtrl 插件链:  StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin
+FlowCtrl 插件链:  StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin
                                                                         │
                                               Rocket.events = Some(Arc<EventDispatcher>)
                                                                         │
-                              ② dispatch HttpStart { &mut rocket }      ← execute 前
-                              ③ rocket.client.execute(radar)
-                                   ├─ Ok  → ④ dispatch HttpEnd { &rocket }   ← 解析前
-                                   └─ Err → ⑤ dispatch HttpError { &rocket, &err } → 返回 Err
+              ② 链尾核心动作 IgniteCore(框架自动挂载,洋葱链固定终点)
+                              ③ dispatch HttpStart { &mut rocket }      ← execute 前
+                              ④ rocket.client.execute(radar)
+                                   ├─ Ok  → ⑤ dispatch HttpEnd { &rocket }   ← 解析前
+                                   └─ Err → ⑥ dispatch HttpError { &rocket, &err } → 返回 Err
                                                                         │
    ▼                                                                    │
-   ⑥ dispatch ArtfulEnd { &mut rocket }  ← 链成功后,可改写 destination    │
+   ⑦ dispatch ArtfulEnd { &mut rocket }  ← 链成功后,可改写 destination    │
    │
    └─ return rocket.destination.unwrap_or_default()
 ```
@@ -54,7 +57,7 @@ src/
 ├── event.rs          ✚ Event / EventListener / EventDispatcher(+单元测试)
 ├── error.rs          ✏ +EventListenerError 变体
 ├── rocket.rs         ✏ Rocket +events 字段(默认 None)
-├── plugins/parser.rs ✏ execute 前后插入 HttpStart/HttpEnd/HttpError 分发
+├── ignite.rs          ✚ 链尾核心动作 IgniteCore(execute 前后插入 HttpStart/HttpEnd/HttpError 分发,由原解析插件文件迁移)
 ├── artful.rs         ✏ Artful +events 字段;artful() 注入与 ArtfulStart/ArtfulEnd;Builder 注册方法
 └── lib.rs            ✏ 导出 + 模块文档 + Send/Sync 契约测试
 tests/event_test.rs   ✚ 集成测试(wiremock)
@@ -71,7 +74,7 @@ artisan-http/docs/ARCHITECTURE.md ✏;README.md / README.zh-CN.md(根目录与 a
 | 变体 | 携带数据 | 可变性 | 对应 PHP 事件 | 触发时机 |
 |------|---------|--------|--------------|---------|
 | `ArtfulStart` | `params: &HashMap`, `plugins: &[Arc<dyn Plugin>]` | 只读 | `Event\ArtfulStart($plugins, $params)` | 链启动前,观测 |
-| `HttpStart` | `rocket: &mut Rocket` | 可变 | `Event\HttpStart($rocket)` | 到达 ParserPlugin 执行点、`execute` 前(正常链中 radar 已构建;缺 `AddRadarPlugin` 时为 `None`,事件仍触发) |
+| `HttpStart` | `rocket: &mut Rocket` | 可变 | `Event\HttpStart($rocket)` | 到达链尾核心动作执行点(`IgniteCore`,框架自动挂载)、`execute` 前(正常链中 radar 已构建;缺 `AddRadarPlugin` 时为 `None`,事件仍触发) |
 | `HttpEnd` | `rocket: &Rocket` | 只读 | `Event\HttpEnd($rocket)` | `execute` 成功、direction 解析前(响应体不可读:body 消费权属于 direction 解析,仅可读 status/headers) |
 | `HttpError` | `rocket: &Rocket`, `error: &ArtfulError` | 只读 | —(Rust 新增) | `execute` 失败,错误照常传播 |
 | `ArtfulEnd` | `rocket: &mut Rocket` | 可变 | `Event\ArtfulEnd($rocket)` | 链成功后、返回 destination 前 |
@@ -99,18 +102,18 @@ struct EventDispatcher { listeners: Vec<Arc<dyn EventListener>> }
 
 ### 3.2 流程/时序设计
 
-`ParserPlugin`(`plugins/parser.rs:31-61`,已验证读过源码)插入点伪代码:
+链尾核心动作 `IgniteCore`(`src/ignite.rs`,由原解析插件代码路径迁移,经 `Artful::artful()` 自动挂载,洋葱链固定终点;已验证读过源码)伪代码:
 
 ```
-assembly(rocket, next):
-    if direction == NoRequest: return next(rocket)          # 不触发任何 HTTP 事件
-    dispatch(HttpStart { rocket })                           # ← 新增(在 radar.take 之前,监听器可见 radar)
+run(rocket):                                              # 链尾终点,无 next
+    if direction == NoRequest: return Ok(())              # 不发起请求,不触发任何 HTTP 事件
+    dispatch(HttpStart { rocket })                        # 在 radar.take 之前,监听器可见 radar
     match client.execute(radar.take().ok_or(MissingRequest)?):
         Ok(resp)  → rocket.destination_origin = Some(resp)
-                    dispatch(HttpEnd { rocket })             # ← 新增,先于解析
-                    …解析… → next(rocket)
-        Err(e)    → dispatch(HttpError { rocket, &RequestFailed(e) })   # ← 新增
-                    return Err(e)                            # 错误照常传播
+                    dispatch(HttpEnd { rocket })          # 先于解析
+                    …解析… → rocket.destination = Some(结果)
+        Err(e)    → dispatch(HttpError { rocket, &RequestFailed(e) })
+                    return Err(e)                         # 错误照常传播
 ```
 
 **触发矩阵**(行为契约):
@@ -120,7 +123,9 @@ assembly(rocket, next):
 | 正常请求 | ✅ | ✅ | ✅ | — | ✅ |
 | HTTP 执行失败 | ✅ | ✅ | — | ✅ | — |
 | `NoRequest` | ✅ | — | — | — | ✅ |
-| 插件失败(execute 前) | ✅ | ✅(若已到达 Parser) | — | — | — |
+| 插件失败(前向阶段) | ✅ | — | — | — | — |
+| 插件不调 next 返 Ok | ✅ | — | — | — | ✅ |
+| 链尾缺 radar | ✅ | ✅ | — | — | — |
 | 解析阶段失败(execute 成功后) | ✅ | ✅ | ✅ | — | — |
 | `Artful::raw()` / `shortcut()` | — / ✅ | 同左 | 同左 | 同左 | 同左 |
 
@@ -157,7 +162,7 @@ assembly(rocket, next):
 v0.16.0(单 PR,分支 feature/event-system)
 ├── 阶段 A:核心类型 —— event.rs + error.rs + rocket.rs
 │     验证点:cargo check --workspace --all-features 通过;event.rs 单测(空表 no-op/顺序/首错中止)通过
-├── 阶段 B:分发点接入 —— parser.rs + artful.rs + lib.rs
+├── 阶段 B:分发点接入 —— ignite.rs(原解析插件迁移) + artful.rs + lib.rs
 │     验证点:既有全部测试不回归;clippy -D warnings 通过
 ├── 阶段 C:集成测试与示例 —— tests/event_test.rs(触发矩阵 5 场景)+ examples/event.rs
 │     验证点:cargo test --workspace --all-features 全绿

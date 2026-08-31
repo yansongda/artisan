@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 透传 `artisan-http` 0.16.0 事件系统：`Event` / `EventListener` / `EventDispatcher` 三个公开类型与 5 个生命周期事件（`ArtfulStart` / `HttpStart` / `HttpEnd` / `HttpError` / `ArtfulEnd`），监听器经 `Artful::builder().event_listener(...)` 注册，详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
 
+### Changed
+
+- **BREAKING**: 透传 `artisan-http` 0.16.0——HTTP 执行与响应解析由 `ParserPlugin` 插件改为框架内置链尾核心动作 `IgniteCore`（`Artful::artful` / `shortcut` 自动挂载，请求必然发起、`HttpStart`/`HttpEnd`/`HttpError` 必然触发，`NoRequest` 除外；空插件链在默认方向下 fail-fast 返回 `MissingRequest`），`artisan_http::ParserPlugin` 公开导出随之删除；迁移方式：从插件链中删除 `ParserPlugin` 一项（链中位于其后的插件前向阶段时序变化需复核），详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+
 ## [0.15.0] - 2026-08-30
 
 ### Added
