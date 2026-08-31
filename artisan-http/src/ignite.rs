@@ -28,7 +28,6 @@
 //! 保留在其 `original` 字段（错误链不丢失）。
 //!
 //! `NoRequest` 方向不发起请求，不触发任何 HTTP 事件。
-#![allow(dead_code)] // Task 2 接线后移除
 
 use async_trait::async_trait;
 

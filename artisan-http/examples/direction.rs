@@ -1,6 +1,6 @@
 //! Direction 响应解析策略示例
 
-use artisan_http::plugins::{AddRadarPlugin, ParserPlugin, StartPlugin};
+use artisan_http::plugins::{AddRadarPlugin, StartPlugin};
 use artisan_http::{Artful, Plugin, Rocket, direction::DirectionKind, flow_ctrl::Next};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -44,7 +44,6 @@ async fn main() -> artisan_http::Result<()> {
             url: "https://httpbin.org/get".to_string(),
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new()?;
@@ -66,7 +65,6 @@ async fn main() -> artisan_http::Result<()> {
             direction: DirectionKind::Response,
         }),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(HashMap::new(), plugins).await?;

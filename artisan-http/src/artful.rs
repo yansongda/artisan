@@ -19,8 +19,8 @@
 //! 实例持有 [`EventDispatcher`]（默认空表，零开销），经
 //! [`ArtfulBuilder::event_listener`] 注册监听器后，[`Artful::artful`] 在
 //! 插件链启动前分发 [`Event::ArtfulStart`]、成功返回前分发 [`Event::ArtfulEnd`]；
-//! HTTP 生命周期事件（HttpStart/HttpEnd/HttpError）由 [`crate::ParserPlugin`]
-//! 在请求执行点分发。
+//! HTTP 生命周期事件（HttpStart/HttpEnd/HttpError）由框架内置链尾核心动作
+//! `IgniteCore` 分发，`artful()` 自动挂载，无需用户插件。
 
 use std::collections::HashMap;
 use std::fmt;
@@ -143,7 +143,8 @@ impl Artful {
     ///
     /// 已注册监听器时，在插件链启动前分发 [`Event::ArtfulStart`]（只读观测），
     /// 链成功后、返回 destination 前分发 [`Event::ArtfulEnd`]（可改写
-    /// `rocket.destination`）；HTTP 生命周期事件由 [`crate::ParserPlugin`] 分发。
+    /// `rocket.destination`）；HTTP 生命周期事件由框架内置链尾核心动作
+    /// `IgniteCore` 分发（`artful()` 自动挂载，无需用户插件）。
     ///
     /// # 参数
     ///
@@ -177,6 +178,8 @@ impl Artful {
         })?;
 
         let mut ctrl = FlowCtrl::new(plugins);
+        // 框架自动挂载链尾核心动作：请求必然发起、HTTP 生命周期事件必然触发
+        ctrl.set_core(Arc::new(crate::ignite::IgniteCore));
 
         ctrl.call_next(&mut rocket).await?;
 
@@ -363,13 +366,18 @@ impl ArtfulBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::direction::DirectionKind;
     use crate::event::test_util::VariantRecorder;
+    use crate::flow_ctrl::Next;
     use crate::rocket::ClientOptions;
+    use async_trait::async_trait;
     use std::sync::Mutex;
 
     #[tokio::test]
-    async fn artful_dispatches_start_and_end() {
-        // 空插件链：仅分发 ArtfulStart / ArtfulEnd，返回 default destination
+    async fn artful_empty_chain_fails_fast() {
+        // 空插件链 + 默认方向（Json）：框架自动挂载的链尾核心动作必执行，
+        // radar 缺失 fail-fast 报 MissingRequest（HttpStart 已于 radar.take
+        // 之前分发；MissingRequest 属前置失败，不触发 HttpError）
         let records = Arc::new(Mutex::new(Vec::new()));
         let mut events = EventDispatcher::default();
         events.add_listener(Arc::new(VariantRecorder {
@@ -379,7 +387,37 @@ mod tests {
         // 同模块测试可写私有字段：注入带监听器的分发器
         artful.events = Arc::new(events);
 
-        let destination = artful.artful(HashMap::new(), vec![]).await.unwrap();
+        let result = artful.artful(HashMap::new(), vec![]).await;
+
+        assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
+        assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "HttpStart"]);
+    }
+
+    #[tokio::test]
+    async fn artful_no_request_returns_none() {
+        // 非空链 + NoRequest：链尾核心动作直接返回，不发起请求、不触发 HTTP 事件
+        struct SetNoRequestPlugin;
+
+        #[async_trait]
+        impl Plugin for SetNoRequestPlugin {
+            async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
+                rocket.config.direction = DirectionKind::NoRequest;
+                next.call(rocket).await
+            }
+        }
+
+        let records = Arc::new(Mutex::new(Vec::new()));
+        let mut events = EventDispatcher::default();
+        events.add_listener(Arc::new(VariantRecorder {
+            records: records.clone(),
+        }));
+        let mut artful = Artful::new().unwrap();
+        artful.events = Arc::new(events);
+
+        let destination = artful
+            .artful(HashMap::new(), vec![Arc::new(SetNoRequestPlugin)])
+            .await
+            .unwrap();
 
         assert!(matches!(destination, Destination::None));
         assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);

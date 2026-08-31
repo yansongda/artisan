@@ -6,7 +6,7 @@
 
 use artisan_http::direction::Destination;
 use artisan_http::event::{Event, EventListener};
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -145,14 +145,14 @@ impl EventListener for HttpErrorFailingListener {
 
 // ============ 构造辅助 ============
 
-/// 最小插件链：StartPlugin → MethodUrlPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin
+/// 最小插件链：StartPlugin → MethodUrlPlugin → AddPayloadBodyPlugin → AddRadarPlugin
+/// （HTTP 执行由框架自动挂载的链尾核心动作完成）
 fn plugin_chain(method: reqwest::Method, url: String) -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(StartPlugin),
         Arc::new(MethodUrlPlugin { method, url }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
     ]
 }
 
@@ -237,7 +237,7 @@ async fn no_request_direction_no_http_events() {
         reqwest::Method::GET,
         "http://nonexistent-host-12345.local/no-request".to_string(),
     );
-    // SetNoRequestPlugin 置于 ParserPlugin 之前即可（此处放在 StartPlugin 之后）
+    // SetNoRequestPlugin 置于链尾核心动作之前即可（此处放在 StartPlugin 之后）
     plugins.insert(1, Arc::new(SetNoRequestPlugin));
 
     let result = artful.artful(HashMap::new(), plugins).await.unwrap();

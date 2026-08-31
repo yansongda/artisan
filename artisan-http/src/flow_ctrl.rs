@@ -70,8 +70,6 @@ impl FlowCtrl {
     }
 
     /// 设置链尾核心动作
-    // Task 2 接线后移除
-    #[allow(dead_code)]
     pub(crate) fn set_core(&mut self, core: Arc<dyn CoreAction>) {
         self.core = Some(core);
     }

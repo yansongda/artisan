@@ -26,7 +26,7 @@ pub trait Shortcut {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
+    use crate::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
 
     struct TestShortcut;
 
@@ -36,7 +36,6 @@ mod tests {
                 Arc::new(StartPlugin),
                 Arc::new(AddPayloadBodyPlugin),
                 Arc::new(AddRadarPlugin),
-                Arc::new(ParserPlugin),
             ]
         }
     }
@@ -46,6 +45,6 @@ mod tests {
         let shortcut = TestShortcut;
         let plugins = shortcut.get_plugins(&HashMap::new());
 
-        assert_eq!(plugins.len(), 4);
+        assert_eq!(plugins.len(), 3);
     }
 }

@@ -31,13 +31,12 @@
 //! | [`StartPlugin`] | 将 params 初始化到 payload |
 //! | [`AddPayloadBodyPlugin`] | 将 payload 序列化为请求体 |
 //! | [`AddRadarPlugin`] | 构建 HTTP Request |
-//! | [`ParserPlugin`] | 执行请求并解析响应 |
 //!
 //! # 使用示例
 //!
 //! ```rust
 //! use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-//! use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin};
+//! use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 //! use async_trait::async_trait;
 //! use std::sync::Arc;
 //!
@@ -82,7 +81,7 @@ pub use flow_ctrl::{FlowCtrl, Next};
 pub use packer::Packer;
 pub use packers::JsonPacker;
 pub use plugin::Plugin;
-pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
+pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
 pub use rocket::{ClientOptions, RequestOptions, Rocket, RocketConfig};
 pub use shortcut::Shortcut;
 

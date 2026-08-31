@@ -1,6 +1,6 @@
 //! Shortcut 快捷方式示例
 
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
 use artisan_http::{Artful, Plugin, Rocket, Shortcut, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -36,7 +36,6 @@ impl Shortcut for HttpbinPostShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
-            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -54,7 +53,6 @@ impl Shortcut for HttpbinGetShortcut {
                 url: "https://httpbin.org/get".to_string(),
             }),
             Arc::new(AddRadarPlugin),
-            Arc::new(ParserPlugin),
         ]
     }
 }
