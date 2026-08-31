@@ -5,6 +5,7 @@
 //! - HTTP 客户端/请求构建错误（ClientBuildError, `RequestBuildError`）
 //! - 序列化错误（JsonSerializeError, `JsonDeserializeError`)
 //! - 插件错误（PluginExecutionError）
+//! - 事件监听器错误（EventListenerError）
 //! - 参数错误（MissingParameter, `InvalidParameter`)
 //! - 响应解析错误（DirectionParseError）
 
@@ -48,6 +49,25 @@ pub enum ArtfulError {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
+    /// 事件监听器执行失败
+    ///
+    /// 监听器返回 `Err` 时由 [`crate::event::EventDispatcher::dispatch`] 包装产生，
+    /// 首错即中止后续监听器并向主流程传播。
+    ///
+    /// `original` 仅在分发 [`crate::event::Event::HttpError`] 时监听器失败的场景
+    /// 填充：被监听器错误顶替的原始执行错误（如
+    /// [`ArtfulError::RequestFailed`]），供下游诊断或分支处理，避免错误链丢失；
+    /// 其余分发点恒为 `None`。
+    #[error("event listener failed: {listener_name} - {message}")]
+    EventListenerError {
+        listener_name: String,
+        message: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        /// 被监听器错误顶替的原始错误（仅 HttpError 分发场景，见变体文档）
+        original: Option<Box<ArtfulError>>,
     },
 
     #[error("missing required parameter: {0}")]
@@ -150,6 +170,60 @@ mod tests {
             source: Some(source),
         };
         assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn event_listener_error_display() {
+        let err = ArtfulError::EventListenerError {
+            listener_name: "MyListener".to_string(),
+            message: "boom".to_string(),
+            source: None,
+            original: None,
+        };
+        assert_eq!(err.to_string(), "event listener failed: MyListener - boom");
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn event_listener_error_with_source() {
+        let source: Box<dyn std::error::Error + Send + Sync> = "inner cause".into();
+        let err = ArtfulError::EventListenerError {
+            listener_name: "MyListener".to_string(),
+            message: "boom".to_string(),
+            source: Some(source),
+            original: None,
+        };
+        assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn event_listener_error_original_preserved() {
+        // HttpError 分发场景：original 保留被顶替的原始错误（RequestFailed），
+        // display 不含 original、source 仍指向监听器错误，两者独立可取
+        let source: Box<dyn std::error::Error + Send + Sync> = "listener inner".into();
+        let err = ArtfulError::EventListenerError {
+            listener_name: "MetricsListener".to_string(),
+            message: "metrics sink unreachable".to_string(),
+            source: Some(source),
+            original: Some(Box::new(ArtfulError::RequestFailed(sample_reqwest_error()))),
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "event listener failed: MetricsListener - metrics sink unreachable"
+        );
+
+        match err {
+            ArtfulError::EventListenerError {
+                original: Some(original),
+                source,
+                ..
+            } => {
+                assert!(matches!(*original, ArtfulError::RequestFailed(_)));
+                assert!(source.is_some());
+            }
+            other => panic!("expected EventListenerError, got {other:?}"),
+        }
     }
 
     #[test]

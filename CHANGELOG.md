@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > 本文件仅记录 artisan facade 相关变更，各子 crate 变更详见各自目录下的 CHANGELOG.md
 
+## [0.16.0] - 2026-08-31
+
+### Added
+
+- 透传 `artisan-http` 0.16.0 事件系统：`Event` / `EventListener` / `EventDispatcher` 三个公开类型与 5 个生命周期事件（`ArtfulStart` / `HttpStart` / `HttpEnd` / `HttpError` / `ArtfulEnd`），监听器经 `Artful::builder().event_listener(...)` 注册，详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+
 ## [0.15.0] - 2026-08-30
 
 ### Added

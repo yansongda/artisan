@@ -8,6 +8,7 @@
 //! - [`RocketConfig`] - HTTP 请求配置（method, url, headers 等）
 //! - [`ClientOptions`] - 客户端级 HTTP 选项（构建 `reqwest::Client` 时生效）
 //! - [`RequestOptions`] - 请求级 HTTP 选项（仅 timeout，单次请求生效）
+//! - [`EventDispatcher`] - 事件分发器（经 `Artful` 实例注入 `Rocket` 传载进插件链）
 //!
 //! # 设计说明
 //!
@@ -20,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::direction::DirectionKind;
+use crate::event::EventDispatcher;
 use crate::packer::Packer;
 use crate::packers::JsonPacker;
 
@@ -113,6 +115,9 @@ pub struct Rocket {
 
     /// 序列化器
     pub packer: Arc<dyn Packer>,
+
+    /// 事件分发器（`Artful` 实例注入，默认 `None`；手动构造 `Rocket` 时不分发事件）
+    pub events: Option<Arc<EventDispatcher>>,
 }
 
 impl std::fmt::Debug for Rocket {
@@ -122,6 +127,7 @@ impl std::fmt::Debug for Rocket {
             .field("payload", &self.payload)
             .field("config", &self.config)
             .field("client", &self.client)
+            .field("events", &self.events)
             .finish_non_exhaustive()
     }
 }
@@ -142,6 +148,7 @@ impl Rocket {
             destination_origin: None,
             destination: None,
             packer: Arc::new(JsonPacker),
+            events: None,
         }
     }
 
@@ -416,6 +423,13 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(config.direction, DirectionKind::Response));
+    }
+
+    #[test]
+    fn test_rocket_events_default_none() {
+        // Rocket::new 默认不注入事件分发器
+        let rocket = Rocket::new(HashMap::new());
+        assert!(rocket.events.is_none());
     }
 
     #[test]
