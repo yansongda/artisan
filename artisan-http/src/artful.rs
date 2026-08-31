@@ -50,8 +50,9 @@ use crate::shortcut::Shortcut;
 pub struct Artful {
     config: Config,
     client: reqwest::Client,
-    /// 事件分发器（默认空表；Clone 共享监听器 Arc，实例克隆后监听器内部状态共享）
-    events: EventDispatcher,
+    /// 事件分发器（默认空表；持 Arc 免每请求 Vec 克隆；实例克隆后
+    /// 共享同一分发器，监听器内部状态共享）
+    events: Arc<EventDispatcher>,
 }
 
 impl Artful {
@@ -99,7 +100,7 @@ impl Artful {
         Ok(Self {
             config,
             client,
-            events: EventDispatcher::default(),
+            events: Arc::new(EventDispatcher::default()),
         })
     }
 
@@ -116,7 +117,7 @@ impl Artful {
         Self {
             config,
             client,
-            events: EventDispatcher::default(),
+            events: Arc::new(EventDispatcher::default()),
         }
     }
 
@@ -164,9 +165,9 @@ impl Artful {
         let mut rocket = Rocket::new(params);
         rocket.client = self.client.clone();
 
-        // 空表跳过注入，免 Arc 分配
+        // 空表跳过注入；非空时仅克隆 Arc（引用计数递增，免 Vec 拷贝）
         if !self.events.is_empty() {
-            rocket.events = Some(Arc::new(self.events.clone()));
+            rocket.events = Some(Arc::clone(&self.events));
         }
 
         // ArtfulStart：链启动前（只读观测；Event 在语句结束后 drop，plugins 可 move）
@@ -331,12 +332,14 @@ impl ArtfulBuilder {
     /// 返回 [`ArtfulError::ClientBuildError`] 当 HTTP 客户端构建失败
     /// （含回调叠加后仍不合法的情况，如非法 user_agent）。
     pub fn build(self) -> Result<Artful> {
-        if let Some(client) = self.client {
-            let mut events = EventDispatcher::default();
-            for listener in self.event_listeners {
-                events.add_listener(listener);
-            }
+        // 先把监听器收集进分发器（两条构建路径共用）
+        let mut events = EventDispatcher::default();
+        for listener in self.event_listeners {
+            events.add_listener(listener);
+        }
+        let events = Arc::new(events);
 
+        if let Some(client) = self.client {
             return Ok(Artful {
                 config: self.config,
                 client,
@@ -350,10 +353,8 @@ impl ArtfulBuilder {
         });
         let mut artful = Artful::with_client_builder(self.config, customize)?;
 
-        // 同模块内私有字段可写：把监听器挂回实例（只构建不挂回会导致监听器静默丢失）
-        for listener in self.event_listeners {
-            artful.events.add_listener(listener);
-        }
+        // 同模块内私有字段可写：整体替换默认空表（只构建不挂回会导致监听器静默丢失）
+        artful.events = events;
 
         Ok(artful)
     }
@@ -362,42 +363,21 @@ impl ArtfulBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::Event;
+    use crate::event::test_util::VariantRecorder;
     use crate::rocket::ClientOptions;
     use std::sync::Mutex;
-
-    /// 记录事件变体名的测试监听器
-    struct VariantRecorder {
-        records: Arc<Mutex<Vec<&'static str>>>,
-    }
-
-    impl EventListener for VariantRecorder {
-        fn name(&self) -> &'static str {
-            "VariantRecorder"
-        }
-
-        fn on_event(&self, event: &mut Event<'_>) -> Result<()> {
-            let name = match event {
-                Event::ArtfulStart { .. } => "ArtfulStart",
-                Event::HttpStart { .. } => "HttpStart",
-                Event::HttpEnd { .. } => "HttpEnd",
-                Event::HttpError { .. } => "HttpError",
-                Event::ArtfulEnd { .. } => "ArtfulEnd",
-            };
-            self.records.lock().unwrap().push(name);
-
-            Ok(())
-        }
-    }
 
     #[tokio::test]
     async fn artful_dispatches_start_and_end() {
         // 空插件链：仅分发 ArtfulStart / ArtfulEnd，返回 default destination
         let records = Arc::new(Mutex::new(Vec::new()));
-        let mut artful = Artful::new().unwrap();
-        artful.events.add_listener(Arc::new(VariantRecorder {
+        let mut events = EventDispatcher::default();
+        events.add_listener(Arc::new(VariantRecorder {
             records: records.clone(),
         }));
+        let mut artful = Artful::new().unwrap();
+        // 同模块测试可写私有字段：注入带监听器的分发器
+        artful.events = Arc::new(events);
 
         let destination = artful.artful(HashMap::new(), vec![]).await.unwrap();
 

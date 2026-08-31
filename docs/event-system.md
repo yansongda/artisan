@@ -2,7 +2,7 @@
 
 > **时间**:2026-08-30
 > **作者**:GLM-5.3-Flash + yansongda
-> **状态**:经过人工审核确认(2026-08-30,对话内批准;三项决策点均按建议确认,见文末决策记录)。2026-08-31 依审查意见修订:ParserPlugin 路径纠正、reqwest 访问器契约由"推断"升级为"已验证"、CHANGELOG 纳入范围;方案方向未变。同日 plan-reviewer 审查通过(0 BLOCKER / 0 MAJOR / 6 MINOR),依 MINOR 意见补充 §3.3 HttpError 分发中监听器失败的错误链语义说明
+> **状态**:经过人工审核确认(2026-08-30,对话内批准;三项决策点均按建议确认,见文末决策记录)。2026-08-31 依审查意见修订:ParserPlugin 路径纠正、reqwest 访问器契约由"推断"升级为"已验证"、CHANGELOG 纳入范围;方案方向未变。同日 plan-reviewer 审查通过(0 BLOCKER / 0 MAJOR / 6 MINOR),依 MINOR 意见补充 §3.3 HttpError 分发中监听器失败的错误链语义说明。再次依 PR 审查意见修订:触发矩阵拆分插件/解析失败两行、HttpStart 触发条件精确为"到达 ParserPlugin 执行点"、`EventListenerError` 增加 `original` 字段保留被顶替的原始错误、HttpEnd 响应体不可读的限制入档
 
 ## 1. 背景与问题
 
@@ -71,8 +71,8 @@ artisan-http/docs/ARCHITECTURE.md ✏;README.md / README.zh-CN.md(根目录与 a
 | 变体 | 携带数据 | 可变性 | 对应 PHP 事件 | 触发时机 |
 |------|---------|--------|--------------|---------|
 | `ArtfulStart` | `params: &HashMap`, `plugins: &[Arc<dyn Plugin>]` | 只读 | `Event\ArtfulStart($plugins, $params)` | 链启动前,观测 |
-| `HttpStart` | `rocket: &mut Rocket` | 可变 | `Event\HttpStart($rocket)` | `execute` 前,radar 已构建 |
-| `HttpEnd` | `rocket: &Rocket` | 只读 | `Event\HttpEnd($rocket)` | `execute` 成功、direction 解析前 |
+| `HttpStart` | `rocket: &mut Rocket` | 可变 | `Event\HttpStart($rocket)` | 到达 ParserPlugin 执行点、`execute` 前(正常链中 radar 已构建;缺 `AddRadarPlugin` 时为 `None`,事件仍触发) |
+| `HttpEnd` | `rocket: &Rocket` | 只读 | `Event\HttpEnd($rocket)` | `execute` 成功、direction 解析前(响应体不可读:body 消费权属于 direction 解析,仅可读 status/headers) |
 | `HttpError` | `rocket: &Rocket`, `error: &ArtfulError` | 只读 | —(Rust 新增) | `execute` 失败,错误照常传播 |
 | `ArtfulEnd` | `rocket: &mut Rocket` | 可变 | `Event\ArtfulEnd($rocket)` | 链成功后、返回 destination 前 |
 
@@ -120,7 +120,8 @@ assembly(rocket, next):
 | 正常请求 | ✅ | ✅ | ✅ | — | ✅ |
 | HTTP 执行失败 | ✅ | ✅ | — | ✅ | — |
 | `NoRequest` | ✅ | — | — | — | ✅ |
-| 插件/解析阶段失败 | ✅ | ✅(若已到达 Parser) | — | — | — |
+| 插件失败(execute 前) | ✅ | ✅(若已到达 Parser) | — | — | — |
+| 解析阶段失败(execute 成功后) | ✅ | ✅ | ✅ | — | — |
 | `Artful::raw()` / `shortcut()` | — / ✅ | 同左 | 同左 | 同左 | 同左 |
 
 与 PHP 版差异说明:PHP 版请求失败时 `HttpEnd` 不触发、无失败事件;本设计补充 `HttpError` 以满足 Rust 显式错误处理场景的可观测需求,其余行为逐点对齐(已验证:经 GitHub API 读取 artful `src/Artful.php`,4 个 `Event::dispatch` 调用点分别为 `artful()` 管线前后与 `ignite()` 请求前后)。`MissingRequest`(链中缺 `AddRadarPlugin`)属请求前置失败,不触发 `HttpError`,与"HttpError 仅限 execute 失败"的范围界定一致。
@@ -129,7 +130,7 @@ assembly(rocket, next):
 
 - 分发按注册顺序同步执行;**任一监听器返回 Err → 立即停止后续监听器,错误包装为 `EventListenerError { listener_name, message, source }` 向上传播,中断主流程**(对齐 PHP/Symfony 语义);
 - 监听器 panic:按 Rust 惯例直接传播,文档注明,不做 `catch_unwind`;
-- 特例(HttpError 分发):分发 `HttpError` 时若监听器自身返回 Err,向上传播的是 `EventListenerError`,原始 `RequestFailed` 不再出现在错误链中——这是"监听器 Err = 主流程 Err"总语义的自然结果,doc 注释注明;
+- 特例(HttpError 分发):分发 `HttpError` 时若监听器自身返回 Err,向上传播的是 `EventListenerError`,原始 `RequestFailed` 保留在其 `original` 字段(错误链不丢失,下游可诊断/分支处理)--PR 审查修订(2026-08-31),取代初版"原始错误从错误链消失"的取舍;
 - 新增错误变体镜像既有 `PluginExecutionError`(`error.rs:45-51`)的结构与 `#[source]` 用法。
 
 ### 3.4 兼容性设计

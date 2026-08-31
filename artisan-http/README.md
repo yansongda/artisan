@@ -241,13 +241,14 @@ let artful = Artful::builder()
 | Event | Fires | Mutability |
 |-------|-------|------------|
 | `ArtfulStart` | before the plugin chain starts | read-only |
-| `HttpStart` | before the HTTP request is sent (radar already built; mutate the request via the `*_mut` accessors on `rocket.radar`) | mutable |
-| `HttpEnd` | after a successful response, before parsing | read-only |
+| `HttpStart` | before the HTTP request is sent, at the ParserPlugin execution point (radar already built in a normal chain; `None` if the chain lacks `AddRadarPlugin` - the event still fires; mutate the request via the `*_mut` accessors on `rocket.radar`) | mutable |
+| `HttpEnd` | after a successful response, before parsing (response body is NOT readable - body consumption belongs to direction parsing; only status / headers are readable) | read-only |
 | `HttpError` | when the HTTP request execution fails (the error still propagates) | read-only |
 | `ArtfulEnd` | after the chain succeeds, before returning the destination (may rewrite `rocket.destination`) | mutable |
 
 > - Listeners are **synchronous** and must be non-blocking — spawn heavy work yourself (`tokio::spawn`).
 > - A listener returning `Err` aborts the main flow (propagates as `EventListenerError`). Bypass listeners should consume errors internally and always return `Ok(())`.
+> - `HttpEnd` cannot read the response body (ownership belongs to direction parsing); only status / headers are available there.
 
 Try it: `cargo run -p artisan-http --example event`.
 

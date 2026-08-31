@@ -98,13 +98,14 @@ let artful = Artful::builder()
 | 事件 | 触发时机 | 可变性 |
 |------|---------|--------|
 | `ArtfulStart` | 插件链启动前 | 只读 |
-| `HttpStart` | HTTP 请求即将发出（radar 已构建；须经 `rocket.radar` 的 `*_mut` 访问器修改请求） | 可变 |
-| `HttpEnd` | 请求成功返回、解析前 | 只读 |
+| `HttpStart` | HTTP 请求即将发出、到达 ParserPlugin 执行点（正常链中 radar 已构建；链中缺 `AddRadarPlugin` 时为 `None`，事件仍触发；须经 `rocket.radar` 的 `*_mut` 访问器修改请求） | 可变 |
+| `HttpEnd` | 请求成功返回、解析前（响应体不可读：body 消费权属于 direction 解析，仅可读 status / headers） | 只读 |
 | `HttpError` | HTTP 请求执行失败（错误照常向上传播） | 只读 |
 | `ArtfulEnd` | 链成功后、返回 destination 前（可改写 `rocket.destination`） | 可变 |
 
 > - 监听器是**同步**回调，必须非阻塞——耗时任务请自行 `tokio::spawn`。
 > - 监听器返回 `Err` 会中止主流程（以 `EventListenerError` 传播）。旁路监听器应内部消化错误、恒返回 `Ok(())`。
+> - `HttpEnd` 无法读取响应体（消费权属于 direction 解析），该事件下仅可读 status / headers。
 
 详见 [artisan-http README 事件系统小节](./artisan-http/README.zh-CN.md#事件系统)，或试一试 `cargo run -p artisan-http --example event`。
 

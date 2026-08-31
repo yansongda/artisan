@@ -660,9 +660,9 @@ Artful::artful()
                                                             │
                        rocket.events = Some(Arc<EventDispatcher>)（实例注入传载）
                                                             │
-                              ② dispatch HttpStart          execute 前（radar 已构建，可改请求）
+                              ② dispatch HttpStart          execute 前（到达 Parser 执行点，正常链中 radar 已构建，可改请求）
                               ③ rocket.client.execute(radar)
-                                   ├─ Ok  → ④ dispatch HttpEnd    解析前（只读）
+                                   ├─ Ok  → ④ dispatch HttpEnd    解析前（只读，响应体不可读）
                                    └─ Err → ⑤ dispatch HttpError  错误照常传播（只读）
    │
    │  ⑥ dispatch ArtfulEnd          链成功后（可改写 rocket.destination）
@@ -675,8 +675,8 @@ Artful::artful()
 | 事件 | 触发时机 | 可变性 | 对应 PHP artful |
 |------|---------|--------|----------------|
 | `ArtfulStart` | 插件链启动前 | 只读 | `Event\ArtfulStart` |
-| `HttpStart` | HTTP 请求即将发出（radar 已构建） | 可改 radar | `Event\HttpStart` |
-| `HttpEnd` | 请求成功返回、解析前 | 只读 | `Event\HttpEnd` |
+| `HttpStart` | 到达 ParserPlugin 执行点、请求即将发出（正常链中 radar 已构建；缺 `AddRadarPlugin` 时 radar 为 `None`，事件仍触发） | 可改 radar | `Event\HttpStart` |
+| `HttpEnd` | 请求成功返回、解析前（响应体不可读：body 消费权属于 direction 解析，仅可读 status / headers） | 只读 | `Event\HttpEnd` |
 | `HttpError` | execute 失败（错误照常向上传播） | 只读 | —（Rust 新增） |
 | `ArtfulEnd` | 链成功后、返回 destination 前 | 可改写 destination | `Event\ArtfulEnd` |
 
@@ -687,13 +687,17 @@ Artful::artful()
 | 正常请求 | ✅ | ✅ | ✅ | — | ✅ |
 | HTTP 执行失败 | ✅ | ✅ | — | ✅ | — |
 | `NoRequest` | ✅ | — | — | — | ✅ |
-| 插件/解析阶段失败 | ✅ | ✅（若已到达 Parser） | — | — | — |
+| 插件失败（execute 前） | ✅ | ✅（若已到达 Parser） | — | — | — |
+| 解析阶段失败（execute 成功后） | ✅ | ✅ | ✅ | — | — |
 
 **错误语义**：监听器按注册顺序同步执行，任一监听器返回 `Err` → 立即停止后续监听器，
-错误包装为 `EventListenerError { listener_name, message, source }` 向上传播、中断主流程；
-仅需旁路观察（日志/metrics）的监听器应内部消化错误、恒返回 `Ok(())`。监听器必须
-**非阻塞**，耗时任务请自行 `tokio::spawn`。`HttpStart` 中修改请求须经 `rocket.radar`
-的 `*_mut` 访问器（radar 已构建，此时改 `rocket.config` 不影响本次请求）。
+错误包装为 `EventListenerError { listener_name, message, source, original }` 向上
+传播、中断主流程；仅需旁路观察（日志/metrics）的监听器应内部消化错误、恒返回
+`Ok(())`。监听器必须**非阻塞**，耗时任务请自行 `tokio::spawn`。`HttpStart` 中修改
+请求须经 `rocket.radar` 的 `*_mut` 访问器（到达 ParserPlugin 执行点时正常链中 radar
+已构建，此时改 `rocket.config` 不影响本次请求；链中缺 `AddRadarPlugin` 时 radar
+为 `None`，事件仍触发）。特殊地，`HttpError` 分发中监听器自身失败时，原始
+`RequestFailed` 保留在 `EventListenerError.original` 字段（错误链不丢失）。
 
 **与插件链的关系**：HTTP 生命周期事件由 `ParserPlugin` 在请求执行点分发（复用既有
 代码路径），分发器经 `Rocket.events`（`Option<Arc<EventDispatcher>>`，默认 `None`）
@@ -1159,7 +1163,7 @@ wiremock = { version = "~0.6.5" }
 
 ### v0.2.0 - 增强
 
-- [x] 事件系统（v0.16.0 已实现，见 §3.4 与 `docs/event-system.md`）
+- [x] 事件系统（v0.16.0 已实现，见 §3.4 与仓库根 `docs/event-system.md`）
 - [ ] 错误处理插件
 - [ ] 更多内置插件（Retry、Cache 等）
 

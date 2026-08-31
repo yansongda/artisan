@@ -8,8 +8,8 @@
 //! | 事件 | 触发时机 | 可变性 |
 //! |------|---------|--------|
 //! | [`Event::ArtfulStart`] | 插件链启动前 | 只读 |
-//! | [`Event::HttpStart`] | HTTP 请求即将发出（radar 已构建） | 可修改请求 |
-//! | [`Event::HttpEnd`] | HTTP 请求成功返回、响应解析之前 | 只读 |
+//! | [`Event::HttpStart`] | 到达 ParserPlugin 执行点、请求即将发出（正常链中 radar 已构建；缺 AddRadarPlugin 时 radar 为 `None`，事件仍触发） | 可修改请求 |
+//! | [`Event::HttpEnd`] | HTTP 请求成功返回、响应解析之前（响应体不可读，见变体文档） | 只读 |
 //! | [`Event::HttpError`] | HTTP 请求执行失败（错误照常向上传播） | 只读 |
 //! | [`Event::ArtfulEnd`] | 插件链执行完毕、即将返回 destination | 可改写 destination |
 //!
@@ -75,18 +75,29 @@ pub enum Event<'a> {
         /// 即将执行的插件链
         plugins: &'a [Arc<dyn Plugin>],
     },
-    /// HTTP 请求即将发出（radar 已构建；修改请求须经 `rocket.radar` 的
-    /// `*_mut` 访问器——此时改 `rocket.config` 不影响本次请求）
+    /// HTTP 请求即将发出（到达 ParserPlugin 执行点即触发）
+    ///
+    /// 触发时正常插件链中 radar 已构建；链中缺 `AddRadarPlugin` 时
+    /// `rocket.radar` 为 `None`（事件仍触发，随后主流程以
+    /// [`ArtfulError::MissingRequest`] 失败）。修改请求须经 `rocket.radar`
+    /// 的 `*_mut` 访问器--此时改 `rocket.config` 不影响本次请求。
     HttpStart {
         /// 请求载体（可修改 radar）
         rocket: &'a mut Rocket,
     },
     /// HTTP 请求成功返回（direction 解析之前；只读）
+    ///
+    /// 注意：响应体（body）的消费权属于 direction 解析，只读视图下无法
+    /// 读取，仅可读 status / headers 等元信息。
     HttpEnd {
         /// 请求载体（destination_origin 已就位）
         rocket: &'a Rocket,
     },
     /// HTTP 请求执行失败（仅指 execute 失败；错误照常向上传播；只读）
+    ///
+    /// 若分发本事件时监听器自身返回 `Err`，向上传播的是
+    /// [`ArtfulError::EventListenerError`]，原始 `RequestFailed` 保留在其
+    /// `original` 字段（错误链不丢失）。
     HttpError {
         /// 请求载体
         rocket: &'a Rocket,
@@ -98,6 +109,27 @@ pub enum Event<'a> {
         /// 请求载体（可改写 destination）
         rocket: &'a mut Rocket,
     },
+}
+
+impl std::fmt::Debug for Event<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // dyn Plugin 不满足 Debug，plugins 仅打印数量（与 EventDispatcher 一致）
+        match self {
+            Event::ArtfulStart { params, plugins } => f
+                .debug_struct("ArtfulStart")
+                .field("params", params)
+                .field("plugins", &plugins.len())
+                .finish(),
+            Event::HttpStart { rocket } => f.debug_tuple("HttpStart").field(rocket).finish(),
+            Event::HttpEnd { rocket } => f.debug_tuple("HttpEnd").field(rocket).finish(),
+            Event::HttpError { rocket, error } => f
+                .debug_struct("HttpError")
+                .field("rocket", rocket)
+                .field("error", error)
+                .finish(),
+            Event::ArtfulEnd { rocket } => f.debug_tuple("ArtfulEnd").field(rocket).finish(),
+        }
+    }
 }
 
 /// 事件监听器（对象安全，可存入 [`Arc`]；同步，禁止阻塞——耗时任务请自行 spawn）
@@ -167,12 +199,47 @@ impl EventDispatcher {
                         listener_name: listener.name().to_string(),
                         message: err.to_string(),
                         source: Some(Box::new(err)),
+                        // 仅 HttpError 分发点会回填被顶替的原始错误（见 parser.rs）
+                        original: None,
                     });
                 }
             }
         }
 
         Ok(())
+    }
+}
+
+/// 共享测试工具（`artful.rs` / `parser.rs` 单测复用，不外暴露给集成测试）
+#[cfg(test)]
+pub(crate) mod test_util {
+    use std::sync::{Arc, Mutex};
+
+    use super::{Event, EventListener};
+    use crate::Result;
+
+    /// 记录事件变体名的测试监听器（恒返回 Ok）
+    pub(crate) struct VariantRecorder {
+        pub(crate) records: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl EventListener for VariantRecorder {
+        fn name(&self) -> &'static str {
+            "VariantRecorder"
+        }
+
+        fn on_event(&self, event: &mut Event<'_>) -> Result<()> {
+            let name = match event {
+                Event::ArtfulStart { .. } => "ArtfulStart",
+                Event::HttpStart { .. } => "HttpStart",
+                Event::HttpEnd { .. } => "HttpEnd",
+                Event::HttpError { .. } => "HttpError",
+                Event::ArtfulEnd { .. } => "ArtfulEnd",
+            };
+            self.records.lock().unwrap().push(name);
+
+            Ok(())
+        }
     }
 }
 
@@ -257,13 +324,34 @@ mod tests {
             ArtfulError::EventListenerError {
                 listener_name,
                 source,
+                original,
                 ..
             } => {
                 assert_eq!(listener_name, "Failing");
                 assert!(source.is_some());
+                // 普通分发点不携带被顶替的原始错误
+                assert!(original.is_none());
             }
             other => panic!("expected EventListenerError, got {other:?}"),
         }
         assert_eq!(*records.lock().unwrap(), vec!["Failing"]);
+    }
+
+    #[test]
+    fn event_debug_impl() {
+        // Event 实现 Debug：含 &mut Rocket 变体也可打印（plugins 仅打印数量）
+        let rocket = Rocket::new(HashMap::new());
+        let event = Event::HttpEnd { rocket: &rocket };
+        assert!(format!("{event:?}").starts_with("HttpEnd"));
+
+        let params = HashMap::new();
+        let plugins: Vec<Arc<dyn Plugin>> = vec![];
+        let event = Event::ArtfulStart {
+            params: &params,
+            plugins: &plugins,
+        };
+        let debug = format!("{event:?}");
+        assert!(debug.starts_with("ArtfulStart"));
+        assert!(debug.contains("plugins: 0"));
     }
 }

@@ -1,7 +1,8 @@
 //! 事件系统集成测试
 //!
 //! 锁定事件时序契约（设计文档 §3.2 触发矩阵）：
-//! 成功序列 / HTTP 失败序列 / NoRequest / HttpStart 修改生效 / ArtfulEnd 改写生效 / 监听器错误传播。
+//! 成功序列 / HTTP 失败序列 / NoRequest / HttpStart 修改生效 / ArtfulEnd 改写生效 /
+//! 监听器错误传播 / HttpError 分发失败保留原始错误。
 
 use artisan_http::direction::Destination;
 use artisan_http::event::{Event, EventListener};
@@ -83,7 +84,6 @@ impl EventListener for HeaderInserterListener {
     fn on_event(&self, event: &mut Event<'_>) -> artisan_http::Result<()> {
         if let Event::HttpStart { rocket } = event {
             // radar 已构建：经 reqwest Request 的 *_mut 访问器修改请求
-            //（见 docs/implementation/event-system-contract.md 契约快照）
             if let Some(radar) = rocket.radar.as_mut() {
                 radar.headers_mut().insert(
                     reqwest::header::HeaderName::from_static("x-event-test"),
@@ -126,6 +126,23 @@ impl EventListener for FailingListener {
     }
 }
 
+/// 仅在 HttpError 分发时返回 Err 的监听器（模拟监控型监听器故障）
+struct HttpErrorFailingListener;
+
+impl EventListener for HttpErrorFailingListener {
+    fn name(&self) -> &'static str {
+        "HttpErrorFailing"
+    }
+
+    fn on_event(&self, event: &mut Event<'_>) -> artisan_http::Result<()> {
+        if matches!(event, Event::HttpError { .. }) {
+            return Err(ArtfulError::Other("listener boom".to_string()));
+        }
+
+        Ok(())
+    }
+}
+
 // ============ 构造辅助 ============
 
 /// 最小插件链：StartPlugin → MethodUrlPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ParserPlugin
@@ -153,7 +170,7 @@ fn recorder_records() -> (Arc<Mutex<Vec<&'static str>>>, Arc<dyn EventListener>)
     (records.clone(), RecorderListener::new(records))
 }
 
-// ============ 触发矩阵 6 场景 ============
+// ============ 触发矩阵 7 场景 ============
 
 #[tokio::test]
 async fn success_path_event_sequence() {
@@ -317,5 +334,33 @@ async fn listener_error_aborts_and_propagates() {
     match mock_server.received_requests().await {
         None => {}
         Some(requests) => assert!(requests.is_empty(), "server received requests"),
+    }
+}
+
+#[tokio::test]
+async fn http_error_listener_failure_preserves_original_error() {
+    // HttpError 分发中监听器自身失败：传播 EventListenerError，
+    // 被顶替的原始 RequestFailed 保留在 original 字段（错误链不丢失）
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let url = format!("http://127.0.0.1:{port}/boom");
+
+    let artful = artful_with_listeners(vec![Arc::new(HttpErrorFailingListener)]);
+
+    let result = artful
+        .artful(HashMap::new(), plugin_chain(reqwest::Method::POST, url))
+        .await;
+
+    match result.unwrap_err() {
+        ArtfulError::EventListenerError {
+            listener_name,
+            original,
+            ..
+        } => {
+            assert_eq!(listener_name, "HttpErrorFailing");
+            assert!(matches!(*original.unwrap(), ArtfulError::RequestFailed(_)));
+        }
+        other => panic!("expected EventListenerError, got {other:?}"),
     }
 }
