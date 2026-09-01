@@ -13,8 +13,9 @@
 //!
 //! # 与 IgniteCore 的分工
 //!
-//! [`IgniteCore`](crate::ignite::IgniteCore) 当前在执行请求成功后内联了
-//! 同样的分发解析逻辑；本插件把该逻辑以插件形态暴露。二者解析语义一致。
+//! [`IgniteCore`](crate::ignite::IgniteCore) 仅执行 HTTP 请求（execute +
+//! 事件分发），不解析；响应解析由本插件在链尾后向阶段完成。0.16.0 中
+//! 该逻辑曾内联于 IgniteCore，0.17.0 起移回插件形态，二者解析语义一致。
 //!
 //! # params 传递语义
 //!
@@ -60,7 +61,7 @@ impl Plugin for ParserPlugin {
         // 后置插件：前向直接穿透，HTTP 完成后在后向阶段解析
         next.call(rocket).await?;
 
-        // 分发解析方向（与 IgniteCore Ok 分支一致）
+        // 分发解析方向（0.16.0 曾内联于 IgniteCore Ok 分支，0.17.0 起由本插件承担）
         // 守卫：destination 只能是 None 或 Response（对齐 PHP 9208）
         if let Some(Destination::Json(_)) = rocket.destination {
             return Err(ArtfulError::InvalidParameter {
