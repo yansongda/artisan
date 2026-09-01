@@ -288,7 +288,7 @@ impl Plugin for MyPlugin {
 
 ### 2.5 FlowCtrl - 流向控制器
 
-FlowCtrl 控制洋葱模型的执行流程，借鉴 [salvo](https://github.com/salvo-rs/salvo) 的设计，并升级为"洋葱链 + 固定终点"模型（对齐 Laravel Pipeline `then(ignite)` 与 reqwest-middleware "Client 恒为链尾终点"的既有实践）：插件链负责前向/后向处理，请求发起由框架内置链尾核心动作 `IgniteCore` 保证必然执行（见 §4.4），由 `Artful::artful` 自动挂载。
+FlowCtrl 控制洋葱模型的执行流程，借鉴 [salvo](https://github.com/salvo-rs/salvo) 的设计，并升级为"洋葱链 + 固定终点"模型（对齐 Laravel Pipeline `then(ignite)` 与 reqwest-middleware "Client 恒为链尾终点"的既有实践）：插件链负责前向/后向处理，请求发起由框架内置链尾核心动作 `IgniteCore` 保证必然执行（见 §4.4），响应解析由链尾插件 `ParserPlugin` 承担（见 §4.5，插件链必须挂载），由 `Artful::artful` 自动挂载核心动作。
 
 ```rust
 /// 链尾核心动作 trait - 洋葱链固定终点（pub(crate)，不进公开 API）
@@ -380,7 +380,7 @@ impl FlowCtrl {
 **执行流程示意**:
 
 ```
-插件列表: [Start, Sign, AddRadar]    链尾核心动作: IgniteCore（框架自动挂载）
+插件列表: [Start, Sign, AddRadar, ParserPlugin]    链尾核心动作: IgniteCore（框架自动挂载，仅执行 HTTP）
 
 执行顺序（洋葱模型）:
 ┌─────────────────────────────────────────────────────────┐
@@ -395,13 +395,18 @@ impl FlowCtrl {
 │   │   │   │   │ AddRadar.assembly()                     │
 │   │   │   │   │   ├─ 前向逻辑: 构建 Request              │
 │   │   │   │   │   ├─ next.call()                        │
-│   │   │   │   │   │   ┌─────────────────────────────────│
-│   │   │   │   │   │   │ IgniteCore.run()（链尾终点）     │
-│   │   │   │   │   │   │   ├─ NoRequest? → 直接返回       │
-│   │   │   │   │   │   │   ├─ dispatch HttpStart         │
-│   │   │   │   │   │   │   ├─ HTTP 请求执行              │
-│   │   │   │   │   │   │   ├─ dispatch HttpEnd           │
-│   │   │   │   │   │   │   └─ 解析响应 → destination     │
+│   │   │   │   │   │   └─────────────────────────────────│
+│   │   │   │   │   │   │ ParserPlugin.assembly()（链尾插件）│
+│   │   │   │   │   │   │   ├─ 前向: 穿透（不做事）         │
+│   │   │   │   │   │   │   ├─ next.call()                │
+│   │   │   │   │   │   │   │   ┌─────────────────────────│
+│   │   │   │   │   │   │   │   │ IgniteCore.run()（终点） │
+│   │   │   │   │   │   │   │   │   ├─ NoRequest? → 返回   │
+│   │   │   │   │   │   │   │   │   ├─ dispatch HttpStart  │
+│   │   │   │   │   │   │   │   │   ├─ HTTP 请求执行       │
+│   │   │   │   │   │   │   │   │   └─ dispatch HttpEnd    │
+│   │   │   │   │   │   │   │   └─────────────────────────│
+│   │   │   │   │   │   │   ├─ 后向: 解析 → destination    │
 │   │   │   │   │   │   └─────────────────────────────────│
 │   │   │   │   │   ├─ 后向逻辑: 无                       │
 │   │   │   │   └─────────────────────────────────────────│
@@ -507,6 +512,8 @@ impl Artful {
         // 构建流向控制器
         let mut ctrl = FlowCtrl::new(plugins);
         // 框架自动挂载链尾核心动作：请求必然发起、HTTP 生命周期事件必然触发
+        // （响应解析不在核心动作内：由插件链链尾的 ParserPlugin 承担，忘挂时请求
+        // 照常发出但 destination 保持 None）
         ctrl.set_core(Arc::new(crate::ignite::IgniteCore));
         
         // 启动洋葱流程，用 ? 传播错误
@@ -692,7 +699,7 @@ Artful::artful()
    │
    │  ① dispatch ArtfulStart        链启动前（只读观测 params / plugins）
    ▼
-插件链: StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin
+插件链: StartPlugin → AddPayloadBodyPlugin → AddRadarPlugin → ... → ParserPlugin（链尾，见 §4.5）
                                        │
            rocket.events = Some(Arc<EventDispatcher>)（实例注入传载）
                                        │
@@ -777,9 +784,9 @@ pub struct AddPayloadBodyPlugin;
 #[async_trait]
 impl Plugin for AddPayloadBodyPlugin {
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> Result<()> {
-        // 如果未手动指定 body，将 payload 按 packer 序列化
+        // 如果未手动指定 body，将 payload 按 packer 序列化（params 传空，对齐 PHP 内置链传 null）
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
-            rocket.config.body = Some(rocket.packer.pack(&rocket.payload)?);
+            rocket.config.body = Some(rocket.packer.pack(&rocket.payload, &HashMap::new())?);
 
             // 请求头缺失 Content-Type 时按 packer 声明补头
             // （判重按头名不区分大小写，不覆盖用户以任意大小写显式设置的值）
@@ -820,7 +827,7 @@ impl Plugin for AddRadarPlugin {
         if let Some(body) = &rocket.config.body {
             request_builder = request_builder.body(body.clone());
         } else if !rocket.payload.is_empty() {
-            let body = rocket.packer.pack(&rocket.payload)?;
+            let body = rocket.packer.pack(&rocket.payload, &HashMap::new())?;
 
             if !rocket.has_header("Content-Type") {
                 if let Some(ct) = rocket.packer.content_type() {
@@ -848,9 +855,9 @@ impl Plugin for AddRadarPlugin {
 }
 ```
 
-### 4.4 IgniteCore - 链尾核心动作
+### 4.4 IgniteCore - 链尾核心动作（HTTP 执行）
 
-链尾核心动作是洋葱链的固定终点（对齐 artful PHP 的 `ignite()`）：执行 HTTP 请求并解析响应。它不是插件，实现 `pub(crate)` 的 `CoreAction` trait（终点无下一层，不复用 `Plugin`），由 `Artful::artful()` 自动挂载（`ctrl.set_core(Arc::new(IgniteCore))`），用户插件链无需也不可再挂解析插件。
+链尾核心动作是洋葱链的固定终点（对齐 artful PHP 的 `ignite()`）：仅执行 HTTP 请求并分发 HTTP 生命周期事件，**不解析响应**。它不是插件，实现 `pub(crate)` 的 `CoreAction` trait（终点无下一层，不复用 `Plugin`），由 `Artful::artful()` 自动挂载（`ctrl.set_core(Arc::new(IgniteCore))`）。响应解析由链尾插件 `ParserPlugin` 承担（见 §4.5）：用户插件链**必须**在末尾挂 `ParserPlugin`，忘挂时请求照常发出（`destination_origin` 持有原始响应）但 `rocket.destination` 保持 `None`。
 
 ```rust
 /// 链尾核心动作 trait - 洋葱链固定终点（pub(crate)，不进公开 API）
@@ -859,7 +866,7 @@ pub(crate) trait CoreAction: Send + Sync {
     async fn run(&self, rocket: &mut Rocket) -> Result<()>;
 }
 
-/// 链尾核心动作 - 执行 HTTP 请求并解析响应
+/// 链尾核心动作 - 仅执行 HTTP 请求（解析由链尾插件 ParserPlugin 承担）
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct IgniteCore;
 
@@ -890,24 +897,10 @@ impl CoreAction for IgniteCore {
             Ok(response) => {
                 rocket.destination_origin = Some(response);
 
-                // HttpEnd：请求成功返回、响应解析之前
+                // HttpEnd：请求成功返回、响应解析（由链中后置插件完成）之前
                 if let Some(events) = &events {
                     events.dispatch(Event::HttpEnd { rocket: &*rocket })?;
                 }
-
-                // 解析响应
-                let destination = match &rocket.config.direction {
-                    DirectionKind::Json => JsonDirection.parse(rocket).await?,
-                    DirectionKind::Response => rocket
-                        .destination_origin
-                        .take()
-                        .map(Destination::Response)
-                        .ok_or(ArtfulError::MissingResponse)?,
-                    DirectionKind::Custom(direction) => direction.clone().parse(rocket).await?,
-                    DirectionKind::NoRequest => Destination::None,
-                };
-
-                rocket.destination = Some(destination);
             }
             Err(err) => {
                 // HttpError：仅 execute 失败触发（MissingRequest 属请求前置失败，不触发）；
@@ -938,10 +931,58 @@ impl CoreAction for IgniteCore {
 
 **错误处理说明**：
 - `MissingRequest` - radar 未构建（AddRadarPlugin 未执行或失败）；属请求前置失败，不触发 `HttpError`
-- `MissingResponse` - `Response` 方向下 destination_origin 不存在
 - `RequestFailed` - HTTP 请求失败
-- `JsonSerializeError` / `JsonDeserializeError` - 序列化/解析失败
 - `EventListenerError` - 事件监听器失败（中断主流程；`HttpError` 分发中监听器失败时，原始 `RequestFailed` 保留在其 `original` 字段）
+
+### 4.5 ParserPlugin - 后置响应解析插件
+
+响应解析由链尾插件 `ParserPlugin` 承担（0.16.0 曾内置于 `IgniteCore`，0.17.0 移回插件形态，对齐 PHP artful 的 `ParserPlugin`）：前向阶段直接穿透，HTTP 完成后在后向阶段按 `rocket.config.direction` 分发解析方向，把 `destination_origin` 解析为 `rocket.destination`。**必须挂在链尾**：忘挂时请求照常发出但不解析（`destination` 保持 `None`）。
+
+```rust
+/// 后置响应解析插件：解析响应为 destination，必须挂在链尾
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParserPlugin;
+
+#[async_trait]
+impl Plugin for ParserPlugin {
+    async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> Result<()> {
+        // 后置插件：前向直接穿透，HTTP 完成后在后向阶段解析
+        next.call(rocket).await?;
+
+        // 守卫：destination 只能是 None 或 Response（对齐 PHP artful 9208）
+        if let Some(Destination::Json(_)) = rocket.destination {
+            return Err(ArtfulError::InvalidParameter {
+                param: "destination".to_string(),
+                message: "ParserPlugin 中 Rocket 的 destination 只能是 None 或 Response".to_string(),
+            });
+        }
+
+        // 按 direction 分发解析（各内置方向对应独立 Direction 实现）
+        let destination = match &rocket.config.direction {
+            DirectionKind::Json => JsonDirection.parse(rocket).await?,
+            DirectionKind::Response => OriginResponseDirection.parse(rocket).await?,
+            // 透传 destination 现有值（无值时为 Destination::None）
+            DirectionKind::NoRequest => NoHttpRequestDirection.parse(rocket).await?,
+            DirectionKind::Custom(direction) => direction.clone().parse(rocket).await?,
+        };
+
+        rocket.destination = Some(destination);
+
+        Ok(())
+    }
+}
+```
+
+**行为要点**：
+- `Json` 方向经 `rocket.packer.unpack` 解包响应体（默认 packer `JsonPacker`；替换为 `XmlPacker` 后响应即按 XML 解包）；`JsonDirection` 把 `rocket.payload` 全量作为 params 传给 packer（不过滤 `_` 前缀，对齐 PHP `$payload?->all()`），因此 `QueryPacker` 的 `_unpack_raw` 等控制参数可经 payload 生效
+- `NoRequest` 方向 + 链尾 `ParserPlugin` 下 `rocket.destination` 为 `Some(Destination::None)`（0.16.0 中为 `None`；经 `Artful::artful` 入口的返回值不变）
+- 守卫：预置 `rocket.destination` 只能是 `None` 或 `Destination::Response`，预置其他值返回 `InvalidParameter`
+
+**错误处理说明**：
+- `MissingResponse` - `Response` 方向下 `destination_origin` 不存在
+- `JsonSerializeError` / `JsonDeserializeError` - JSON 序列化/解析失败
+- `XmlSerializeError` / `XmlDeserializeError` - XML 序列化/解析失败
+- `InvalidParameter` - 守卫拒绝（destination 预置了非 `None`/`Response` 值）
 
 ---
 
@@ -975,7 +1016,7 @@ let artful = Artful::builder()
 
 ```rust
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
+use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -1012,6 +1053,7 @@ async fn main() -> artisan_http::Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
     ];
 
     let result = artful.artful(params, plugins).await?;
@@ -1028,7 +1070,7 @@ async fn main() -> artisan_http::Result<()> {
 
 ```rust
 use artisan_http::{Artful, Shortcut, Plugin};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
+use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -1049,6 +1091,7 @@ impl Shortcut for MyApiShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
+            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -1123,7 +1166,7 @@ artisan-http/
 │   ├── artful.rs               # Artful 主入口（实例类型）
 │   ├── rocket.rs               # Rocket + RocketConfig + ClientOptions/RequestOptions
 │   ├── flow_ctrl.rs            # FlowCtrl 流向控制 + Next 闭包 + CoreAction
-│   ├── ignite.rs               # IgniteCore 链尾核心动作（execute + parse）
+│   ├── ignite.rs               # IgniteCore 链尾核心动作（仅 HTTP 执行；响应解析归链尾插件 ParserPlugin）
 │   ├── config.rs               # Config（http: ClientOptions + extra）
 │   ├── error.rs                # ArtfulError 错误定义（英文 Display）
 │   │
@@ -1132,19 +1175,24 @@ artisan-http/
 │   │   ├── mod.rs              # 导出所有内置插件
 │   │   ├── start.rs            # StartPlugin
 │   │   ├── add_radar.rs        # AddRadarPlugin
-│   │   └── add_payload_body.rs # AddPayloadBodyPlugin
+│   │   ├── add_payload_body.rs # AddPayloadBodyPlugin
+│   │   └── parser.rs           # ParserPlugin（后置响应解析，必须链尾）
 │   │
 │   ├── shortcut.rs             # Shortcut trait
 │   │
 │   ├── direction.rs            # Direction trait + DirectionKind + Destination
 │   ├── directions/             # 内置 Direction 实现
 │   │   ├── mod.rs              # 导出所有内置 Direction
-│   │   └── json.rs             # Json
+│   │   ├── json.rs             # JsonDirection
+│   │   ├── no_http_request.rs  # NoHttpRequestDirection
+│   │   └── origin_response.rs  # OriginResponseDirection
 │   │
 │   ├── packer.rs               # Packer trait（pack/unpack/content_type）
 │   ├── packers/                # 内置 Packer 实现
 │   │   ├── mod.rs              # 导出所有内置 Packer
-│   │   └── json.rs             # JsonPacker
+│   │   ├── json.rs             # JsonPacker
+│   │   ├── query.rs            # QueryPacker
+│   │   └── xml.rs              # XmlPacker
 │   │
 │   └── http.rs                 # build_builder / build_client / default_client（模块私有）
 │
@@ -1158,10 +1206,9 @@ artisan-http/
 ├── tests/
 │   ├── artful_test.rs
 │   ├── direction_test.rs
-│   ├── flow_ctrl_test.rs
+│   ├── event_test.rs
 │   ├── integration_test.rs
-│   ├── packer_test.rs
-│   ├── rocket_test.rs
+│   ├── parser_test.rs
 │   └── shortcut_test.rs
 │
 └── docs/
@@ -1176,15 +1223,15 @@ artisan-http/
 | `src/artful.rs` | 主入口 | `Artful` struct（实例类型） |
 | `src/rocket.rs` | 请求载体 + 配置 | `Rocket`, `RocketConfig`, `ClientOptions`, `RequestOptions` |
 | `src/flow_ctrl.rs` | 流向控制器 | `FlowCtrl`, `Next`（`CoreAction` 为 `pub(crate)`） |
-| `src/ignite.rs` | 链尾核心动作 | `IgniteCore`（`pub(crate)`，由 `Artful::artful()` 自动挂载） |
+| `src/ignite.rs` | 链尾核心动作 | `IgniteCore`（`pub(crate)`，仅 HTTP 执行，由 `Artful::artful()` 自动挂载） |
 | `src/config.rs` | 框架配置 | `Config` |
 | `src/plugin.rs` | 插件 trait | `Plugin` trait |
-| `src/plugins/` | 内置插件 | `StartPlugin`, `AddRadarPlugin`, `AddPayloadBodyPlugin`（HTTP 执行与解析由链尾核心动作 `IgniteCore` 承担，见 §4.4） |
+| `src/plugins/` | 内置插件 | `StartPlugin`, `AddRadarPlugin`, `AddPayloadBodyPlugin`, `ParserPlugin`（HTTP 执行由链尾核心动作 `IgniteCore` 承担，见 §4.4；响应解析由链尾插件 `ParserPlugin` 承担，见 §4.5） |
 | `src/shortcut.rs` | 快捷方式 trait | `Shortcut` trait |
 | `src/direction.rs` | 解析策略 trait | `Direction`, `DirectionKind`, `Destination` |
-| `src/directions/` | 内置解析器 | `Json` |
+| `src/directions/` | 内置解析器 | `JsonDirection`, `NoHttpRequestDirection`, `OriginResponseDirection` |
 | `src/packer.rs` | 序列化 trait | `Packer` trait |
-| `src/packers/` | 内置序列化器 | `JsonPacker` |
+| `src/packers/` | 内置序列化器 | `JsonPacker`, `QueryPacker`, `XmlPacker` |
 | `src/http.rs` | HTTP 客户端构建（模块私有） | `build_builder` / `build_client` / `default_client` |
 | `src/error.rs` | 错误 | `ArtfulError` enum |
 
@@ -1197,6 +1244,7 @@ artisan-http/
 ```toml
 [dependencies]
 async-trait = { version = "~0.1.89" }
+quick-xml = { version = "~0.41" }
 reqwest = { version = "~0.13.2", features = ["json"] }
 serde_json = { version = "~1.0.149" }
 thiserror = { version = "~2.0.18" }
@@ -1245,11 +1293,18 @@ wiremock = { version = "~0.6.5" }
 - [ ] 错误处理插件
 - [ ] 更多内置插件（Retry、Cache 等）
 
+### v0.17.0 - 解析回归插件化 + Packer/Direction 家族扩展（2026-09-01）
+
+- [x] `ParserPlugin` 回归：响应解析由 `IgniteCore` 移回链尾插件（`IgniteCore` 仅 HTTP 执行，见 §4.4 / §4.5）
+- [x] `QueryPacker`（RFC1738 + `_unpack_raw` 原始模式）与 `XmlPacker`（CDATA 格式，quick-xml 0.41）
+- [x] `NoHttpRequestDirection` / `OriginResponseDirection` 独立 Direction 实现
+- [x] `Packer::pack`/`unpack` 增加 `params` 形参；`JsonDirection` 改经 `rocket.packer.unpack` 解包
+- [x] XML Packer 支持（原 v0.3.0 规划项，提前落地）
+
 ### v0.3.0 - 生态
 
 - [ ] 支付宝支付插件包 `artisan-alipay`
 - [ ] 微信支付插件包 `artisan-wechat`
-- [ ] XML Packer 支持（可选）
 
 ---
 

@@ -22,7 +22,7 @@ cargo add artisan-http
 
 ```toml
 [dependencies]
-artisan-http = "0.16.0"
+artisan-http = "0.17.0"
 ```
 
 ## Quick Start
@@ -31,7 +31,7 @@ artisan-http = "0.16.0"
 
 ```rust
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
+use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -66,6 +66,7 @@ async fn main() -> artisan_http::Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new()?;
@@ -83,7 +84,7 @@ async fn main() -> artisan_http::Result<()> {
 
 ```rust
 use artisan_http::{Artful, Shortcut, Plugin};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
+use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -105,6 +106,7 @@ impl Shortcut for MyApiShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
+            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -320,10 +322,22 @@ pub enum DirectionKind {
 | `StartPlugin` | Initializes `payload` from `params` |
 | `AddPayloadBodyPlugin` | Serializes the payload into the request body |
 | `AddRadarPlugin` | Builds the HTTP Request |
+| `ParserPlugin` | Parses the response into `destination` (must be the last entry of the chain) |
 
-> HTTP execution and response parsing are handled by the framework's built-in tail core action `IgniteCore`, mounted automatically by `Artful::artful` / `Artful::shortcut` - the plugin chain does not need and must not include a parsing plugin anymore. The minimal chain shape is `[StartPlugin, ..., AddRadarPlugin]`.
+> HTTP execution is handled by the framework's built-in tail core action `IgniteCore`, mounted automatically by `Artful::artful` / `Artful::shortcut`. Response parsing is the job of `ParserPlugin`: **the plugin chain must include `ParserPlugin` as its last entry** - if you forget it, the request is still sent but nothing is parsed (`rocket.destination` stays `None`). The minimal chain shape is `[StartPlugin, ..., AddRadarPlugin, ParserPlugin]`.
 >
-> **Migrating from 0.15.x**: remove the parsing plugin entry from your plugin chain (the type no longer exists, so old code fails to compile; see the CHANGELOG 0.16.0 entry for the old type name). Note: if any plugin in your chain was positioned **after** the old parsing plugin, its logic before `next.call` (forward phase) now runs **before** the request is executed (`destination` / `destination_origin` are still `None` and radar is not consumed; the backward phase is unaffected) - review such chains. See ARCHITECTURE.md §3.4 (Events) for details.
+> **Migrating from 0.16.0**: append `Arc::new(ParserPlugin)` to the end of your plugin chain. Also note `Packer::pack` / `Packer::unpack` now take an extra `params: &HashMap<String, Value>` argument (custom `Packer` implementations just add the parameter, usually ignored), and `JsonDirection` unpacks the response body via `rocket.packer.unpack` (default path unchanged; with `rocket.packer` set to `XmlPacker`, responses are unpacked as XML). See the CHANGELOG 0.17.0 entry for details.
+
+### Built-in Packers & Directions
+
+| Type | Kind | Purpose |
+|------|------|---------|
+| `JsonPacker` | Packer | JSON serialization (default) |
+| `QueryPacker` | Packer | RFC1738 form-urlencoded; `unpack` supports the raw mode via `_unpack_raw` |
+| `XmlPacker` | Packer | CDATA-format XML (quick-xml based); leaf text stays `String` |
+| `JsonDirection` | Direction | Parses via `rocket.packer.unpack` (default) |
+| `NoHttpRequestDirection` | Direction | `NoRequest`: no HTTP request is sent |
+| `OriginResponseDirection` | Direction | `Response`: returns the raw response |
 
 ## Examples
 

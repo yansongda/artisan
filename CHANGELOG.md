@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > 本文件仅记录 artisan facade 相关变更，各子 crate 变更详见各自目录下的 CHANGELOG.md
 
+## [0.17.0] - 2026-09-01
+
+### Added
+
+- 透传 `artisan-http` 0.17.0 新增类型：`QueryPacker` / `XmlPacker`（内置 Packer）、`NoHttpRequestDirection` / `OriginResponseDirection`（内置 Direction）、`ParserPlugin`（后置响应解析插件）与 `XmlSerializeError` / `XmlDeserializeError` 错误变体，详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+
+### Changed
+
+- **BREAKING**: 同步 `artisan-http` 0.17.0——响应解析由框架内置链尾核心动作 `IgniteCore` 移回插件链链尾 `ParserPlugin`（`IgniteCore` 仅执行 HTTP 请求，忘挂解析插件时请求照常发出但不解析）；`Packer::pack`/`unpack` 新增 `params` 形参（自定义 `Packer` 实现需补参适配）；`JsonDirection` 改经 `rocket.packer.unpack` 解包响应体（默认路径行为不变），迁移方式详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+
 ## [0.16.0] - 2026-08-31
 
 ### Added

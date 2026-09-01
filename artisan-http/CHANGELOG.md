@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-09-01
+
+### Added
+
+- `QueryPacker`：RFC1738（`application/x-www-form-urlencoded`）编解码 Packer；`unpack` 支持 `_unpack_raw` 原始模式（跳过 URL 解码，透传原始键值文本，对齐 PHP artful）
+- `XmlPacker`：CDATA 格式 XML Packer（基于 quick-xml 0.41）：pack 输出 `<xml>` 根元素、叶子值以 `<![CDATA[...]]>` 承载；unpack 结果对齐 PHP `simplexml → json_encode → json_decode` 语义（叶子文本一律 `Value::String`、无文本元素/自闭合为空 Object、同名兄弟第二次出现转数组、混合内容丢弃直接文本）
+- `NoHttpRequestDirection` / `OriginResponseDirection`：`NoRequest` / `Response` 方向的独立 `Direction` 实现（0.16.0 起这两个方向仅由链尾核心动作短路处理，本版本补齐实现类型，供 `ParserPlugin` 分发与用户直接使用）
+- `ParserPlugin` 回归：后置响应解析插件（0.16.0 曾随解析内置进 `IgniteCore` 而删除，本版本恢复为插件形态，见下 Changed）；带守卫：`rocket.destination` 只能是 `None` 或 `Destination::Response`，否则返回 `InvalidParameter`（对齐 PHP artful 9208）
+- 错误变体 `XmlSerializeError` / `XmlDeserializeError`（XML 序列化/解析失败）
+- 新增依赖 `quick-xml`（钉定 0.41；0.42 需 MSRV 1.86，超出仓库 MSRV 1.85）
+
+### Changed
+
+- **BREAKING**: `Packer::pack` / `Packer::unpack` 新增 `params: &HashMap<String, Value>` 形参。迁移：自定义 `Packer` 实现补一个形参即可（内置 Packer 的 pack 侧忽略该参数；unpack 侧按 PHP artful 语义读取 `_unpack_raw` 等控制参数，参数经 `rocket.payload` 全量透传）
+- **BREAKING**: 响应解析由 `IgniteCore` 内置改回插件链承担：`IgniteCore` 仅执行 HTTP 请求（execute + `HttpStart`/`HttpEnd`/`HttpError` 事件分发，事件语义不变），解析由链尾插件 `ParserPlugin` 完成。迁移：插件链末尾追加 `Arc::new(ParserPlugin)`；忘挂时请求照常发出（`destination_origin` 持有原始响应）但 `rocket.destination` 保持 `None`（不解析）
+- **BREAKING**: `JsonDirection` 改经 `rocket.packer.unpack` 解包响应体（默认路径行为不变：默认 packer 为 `JsonPacker`，解包失败仍返回 `JsonDeserializeError`）；将 `rocket.packer` 替换为 `XmlPacker` 后，JSON 方向的响应即按 XML 解包（direction 决定"取 body 交给谁"、packer 决定"怎么解"）
+- `NoRequest` 方向 + 链尾 `ParserPlugin` 下 `rocket.destination` 为 `Some(Destination::None)`（0.16.0 中为 `None`；经 `Artful::artful` 入口的返回值不变，仍为 `Destination::None`）
+- 与 PHP artful 的有意差异：`XmlPacker` 遇非法 XML 返回结构化错误（`XmlDeserializeError`）而非 PHP 的 `TypeError`；XML pack 遇嵌套容器显式报错而非产出 PHP 的 `<![CDATA[Array]]>` 垃圾值；XML pack 空集合产出 `<xml></xml>`（与 PHP 一致）；XML 叶子文本一律字符串（PHP simplexml → json 全程无数字转换）
+
 ## [0.16.0] - 2026-08-31
 
 ### Added

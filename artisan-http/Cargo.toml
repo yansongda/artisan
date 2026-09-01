@@ -1,6 +1,6 @@
 [package]
 name = "artisan-http"
-version = "0.16.0"
+version = "0.17.0"
 description = "Api RequesT Framework U Like - 你喜欢的 Rust API 请求框架 - an HTTP client with onion-model middleware & a plugin system (the Rust sibling of yansongda/artful)"
 edition.workspace = true
 rust-version.workspace = true
