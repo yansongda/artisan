@@ -177,12 +177,16 @@ async fn manual_content_type_not_overridden() {
 struct FormPacker;
 
 impl Packer for FormPacker {
-    fn pack(&self, data: &HashMap<String, Value>) -> artisan_http::Result<String> {
+    fn pack(
+        &self,
+        data: &HashMap<String, Value>,
+        _params: &HashMap<String, Value>,
+    ) -> artisan_http::Result<String> {
         let pairs: Vec<String> = data.iter().map(|(k, v)| format!("{k}={v}")).collect();
         Ok(pairs.join("&"))
     }
 
-    fn unpack(&self, data: &str) -> artisan_http::Result<Value> {
+    fn unpack(&self, data: &str, _params: &HashMap<String, Value>) -> artisan_http::Result<Value> {
         serde_json::from_str(data).map_err(|e| ArtfulError::JsonDeserializeError {
             message: e.to_string(),
             source: Some(e),

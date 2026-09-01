@@ -17,17 +17,27 @@ use crate::Result;
 pub trait Packer: Send + Sync + std::fmt::Debug {
     /// 序列化数据
     ///
+    /// `params` 携带调用方附加参数（如 `_unpack_raw`），实现方可忽略；
+    /// 对齐 PHP `PackerInterface::pack` 的 `$params` 形参。
+    ///
     /// # Errors
     ///
     /// 返回错误当序列化失败。
-    fn pack(&self, data: &HashMap<String, Value>) -> Result<String>;
+    fn pack(
+        &self,
+        data: &HashMap<String, Value>,
+        params: &HashMap<String, Value>,
+    ) -> Result<String>;
 
     /// 反序列化数据
+    ///
+    /// `params` 携带调用方附加参数（如 `_unpack_raw`），实现方可忽略；
+    /// 对齐 PHP `PackerInterface::unpack` 的 `$params` 形参。
     ///
     /// # Errors
     ///
     /// 返回错误当反序列化失败。
-    fn unpack(&self, data: &str) -> Result<Value>;
+    fn unpack(&self, data: &str, params: &HashMap<String, Value>) -> Result<Value>;
 
     /// 获取序列化后请求体的 Content-Type
     ///
@@ -48,11 +58,15 @@ mod tests {
     struct NoContentTypePacker;
 
     impl Packer for NoContentTypePacker {
-        fn pack(&self, _data: &HashMap<String, Value>) -> Result<String> {
+        fn pack(
+            &self,
+            _data: &HashMap<String, Value>,
+            _params: &HashMap<String, Value>,
+        ) -> Result<String> {
             Ok(String::new())
         }
 
-        fn unpack(&self, _data: &str) -> Result<Value> {
+        fn unpack(&self, _data: &str, _params: &HashMap<String, Value>) -> Result<Value> {
             Ok(Value::Null)
         }
     }

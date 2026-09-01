@@ -14,6 +14,7 @@
 //! - 结果存入 rocket.radar
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::Rocket;
@@ -42,7 +43,7 @@ impl Plugin for AddRadarPlugin {
         if let Some(body) = &rocket.config.body {
             request_builder = request_builder.body(body.clone());
         } else if !rocket.payload.is_empty() {
-            let body = rocket.packer.pack(&rocket.payload)?;
+            let body = rocket.packer.pack(&rocket.payload, &HashMap::new())?;
 
             // 判重按头名不区分大小写（该分支位于 headers 遍历之后，直接补到 request_builder）
             if !rocket.has_header("Content-Type") {
