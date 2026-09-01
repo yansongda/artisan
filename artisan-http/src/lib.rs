@@ -58,7 +58,7 @@
 pub mod direction;
 pub mod directions;
 pub mod error;
-pub use directions::JsonDirection;
+pub use directions::{JsonDirection, NoHttpRequestDirection, OriginResponseDirection};
 pub mod artful;
 pub mod config;
 pub mod event;
@@ -105,6 +105,8 @@ mod tests {
         assert_send_sync::<ClientOptions>();
         assert_send_sync::<JsonPacker>();
         assert_send_sync::<JsonDirection>();
+        assert_send_sync::<NoHttpRequestDirection>();
+        assert_send_sync::<OriginResponseDirection>();
         assert_send_sync::<EventDispatcher>();
     }
 

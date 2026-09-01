@@ -32,8 +32,8 @@
 use async_trait::async_trait;
 
 use crate::Rocket;
-use crate::direction::{Destination, Direction, DirectionKind};
-use crate::directions::JsonDirection;
+use crate::direction::{Direction, DirectionKind};
+use crate::directions::{JsonDirection, NoHttpRequestDirection, OriginResponseDirection};
 use crate::error::ArtfulError;
 use crate::event::Event;
 use crate::flow_ctrl::CoreAction;
@@ -79,13 +79,10 @@ impl CoreAction for IgniteCore {
                 // 解析响应
                 let destination = match &rocket.config.direction {
                     DirectionKind::Json => JsonDirection.parse(rocket).await?,
-                    DirectionKind::Response => rocket
-                        .destination_origin
-                        .take()
-                        .map(Destination::Response)
-                        .ok_or(ArtfulError::MissingResponse)?,
+                    DirectionKind::Response => OriginResponseDirection.parse(rocket).await?,
                     DirectionKind::Custom(direction) => direction.clone().parse(rocket).await?,
-                    DirectionKind::NoRequest => Destination::None,
+                    // 兜底分支（短路后不可达）：透传 destination，恒为 None
+                    DirectionKind::NoRequest => NoHttpRequestDirection.parse(rocket).await?,
                 };
 
                 rocket.destination = Some(destination);
