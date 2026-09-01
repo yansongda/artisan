@@ -31,6 +31,7 @@
 //! | [`StartPlugin`] | 将 params 初始化到 payload |
 //! | [`AddPayloadBodyPlugin`] | 将 payload 序列化为请求体 |
 //! | [`AddRadarPlugin`] | 构建 HTTP Request |
+//! | [`ParserPlugin`] | 解析响应为 destination，必须挂在链尾 |
 //!
 //! # 使用示例
 //!
@@ -81,7 +82,7 @@ pub use flow_ctrl::{FlowCtrl, Next};
 pub use packer::Packer;
 pub use packers::{JsonPacker, QueryPacker, XmlPacker};
 pub use plugin::Plugin;
-pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
+pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 pub use rocket::{ClientOptions, RequestOptions, Rocket, RocketConfig};
 pub use shortcut::Shortcut;
 
@@ -110,6 +111,7 @@ mod tests {
         assert_send_sync::<NoHttpRequestDirection>();
         assert_send_sync::<OriginResponseDirection>();
         assert_send_sync::<EventDispatcher>();
+        assert_send_sync::<ParserPlugin>();
     }
 
     #[test]
