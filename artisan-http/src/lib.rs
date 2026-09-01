@@ -79,7 +79,7 @@ pub use error::{ArtfulError, Result};
 pub use event::{Event, EventDispatcher, EventListener};
 pub use flow_ctrl::{FlowCtrl, Next};
 pub use packer::Packer;
-pub use packers::{JsonPacker, QueryPacker};
+pub use packers::{JsonPacker, QueryPacker, XmlPacker};
 pub use plugin::Plugin;
 pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
 pub use rocket::{ClientOptions, RequestOptions, Rocket, RocketConfig};
@@ -105,6 +105,7 @@ mod tests {
         assert_send_sync::<ClientOptions>();
         assert_send_sync::<JsonPacker>();
         assert_send_sync::<QueryPacker>();
+        assert_send_sync::<XmlPacker>();
         assert_send_sync::<JsonDirection>();
         assert_send_sync::<NoHttpRequestDirection>();
         assert_send_sync::<OriginResponseDirection>();
