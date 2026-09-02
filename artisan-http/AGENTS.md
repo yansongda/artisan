@@ -37,16 +37,17 @@ src/
 ├── artful.rs        # Artful struct (instance: new/with_config/with_client_builder/with_client + builder(), artful, shortcut, raw)
 ├── rocket.rs        # Rocket + RocketConfig + ClientOptions/RequestOptions
 ├── flow_ctrl.rs     # FlowCtrl + Next + CoreAction (onion control)
-├── ignite.rs        # IgniteCore (链尾核心动作: execute + parse)
+├── ignite.rs        # IgniteCore (链尾核心动作: 仅执行 HTTP + HTTP 事件分发；响应解析由链尾插件 ParserPlugin 承担)
 ├── plugin.rs        # Plugin trait (async_trait)
 ├── plugins/         # Built-in plugins
 │   ├── start.rs     # StartPlugin (init payload)
 │   ├── add_radar.rs # AddRadarPlugin (build Request, fallback CT header)
-│   └── add_payload_body.rs
+│   ├── add_payload_body.rs
+│   └── parser.rs    # ParserPlugin (解析响应为 destination, 必须链尾)
 ├── direction.rs     # Direction trait + DirectionKind + Destination
-├── directions/      # Built-in parsers (JsonDirection)
+├── directions/      # Built-in parsers (JsonDirection / NoHttpRequestDirection / OriginResponseDirection)
 ├── packer.rs        # Packer trait (pack/unpack/content_type)
-├── packers/         # Built-in serializers (JsonPacker)
+├── packers/         # Built-in serializers (JsonPacker / QueryPacker / XmlPacker)
 ├── shortcut.rs      # Shortcut trait
 ├── config.rs        # Config (http: ClientOptions + extra)
 ├── error.rs         # ArtfulError enum (thiserror, English Display)
@@ -107,21 +108,20 @@ pub trait Shortcut {  // no Default bound required
 
 ## Testing
 
-- Tests across 7 files
+- Tests across 6 files
 - Use `wiremock` for HTTP mocking in integration tests
 - `#[tokio::test]` for async tests
-- Tests in `tests/` directory, not inline
+- Integration tests live in `tests/`; pure-logic unit tests are inline via `#[cfg(test)]` in the corresponding module
 
 ### Test Files
 
 | File | Coverage |
 |------|----------|
 | `artful_test.rs` | Artful methods, instance accessors, HTTP errors, plugin error propagation |
-| `direction_test.rs` | DirectionKind, Destination, custom Direction |
-| `flow_ctrl_test.rs` | FlowCtrl::skip_rest, empty chain |
-| `rocket_test.rs` | Rocket convenience methods, RocketConfig, ClientOptions/RequestOptions |
+| `direction_test.rs` | DirectionKind, Destination, custom Direction, packer-swapped parsing |
+| `event_test.rs` | Event lifecycle, listener ordering, EventListenerError |
 | `integration_test.rs` | Full pipeline, Content-Type auto-header, client timeout |
-| `packer_test.rs` | JsonPacker pack/unpack |
+| `parser_test.rs` | ParserPlugin parsing, destination guard, chain-tail semantics |
 | `shortcut_test.rs` | Shortcut trait |
 
 ## Gotchas

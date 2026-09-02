@@ -11,7 +11,7 @@
 //!   监听器一旦返回 `Err`，会以 `EventListenerError` 中断主流程；
 //! - 示例向 httpbin.org 发起真实请求，外部网络不可用时打印警告后正常退出。
 
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{
     Artful, Destination, Event, EventListener, Plugin, Result, Rocket, flow_ctrl::Next,
 };
@@ -96,6 +96,8 @@ async fn main() -> Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
+        // 链尾挂载 ParserPlugin：0.17.0 起响应解析由它承担
+        Arc::new(ParserPlugin),
     ];
 
     match artful.artful(params, plugins).await {
@@ -109,6 +111,8 @@ async fn main() -> Result<()> {
     // HttpStart/HttpEnd 由框架自动挂载的链尾核心动作（IgniteCore）分发：
     // 插件链只需准备请求（method/url/radar），无需挂载任何"执行请求"的插件。
     // 注意链不可为空：空链会 fail-fast 报 MissingRequest 且不触发 HttpEnd。
+    // 0.17.0 起响应解析由 ParserPlugin 承担：本段刻意不挂它——请求照常发出、
+    // 事件照常触发，但 destination 保持 None，说明事件系统与响应解析完全解耦。
     eprintln!("\n[event] ---- 插件链不含任何解析插件，HTTP 事件依然触发 ----");
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
@@ -117,10 +121,14 @@ async fn main() -> Result<()> {
             url: "https://httpbin.org/get".to_string(),
         }),
         Arc::new(AddRadarPlugin),
+        // 刻意不挂解析插件：见上方说明
     ];
 
     match artful.artful(HashMap::new(), plugins).await {
-        Ok(Destination::Json(json)) => println!("Response: {json}"),
+        // 未挂解析插件：请求发出但 destination 为 None
+        Ok(Destination::None) => {
+            println!("未挂 ParserPlugin，destination 为 None（0.17.0 起解析由 ParserPlugin 承担）")
+        }
         Ok(other) => println!("Destination: {other:?}"),
         // 外部网络不可用时走到这里：打印警告后正常退出
         Err(err) => eprintln!("[warn] request failed (network unavailable?): {err}"),

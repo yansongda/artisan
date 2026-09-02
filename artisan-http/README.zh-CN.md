@@ -22,7 +22,7 @@ cargo add artisan-http
 
 ```toml
 [dependencies]
-artisan-http = "0.16.0"
+artisan-http = "0.17.0"
 ```
 
 ## 快速开始
@@ -31,7 +31,7 @@ artisan-http = "0.16.0"
 
 ```rust
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
+use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -66,6 +66,7 @@ async fn main() -> artisan_http::Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new()?;
@@ -83,7 +84,7 @@ async fn main() -> artisan_http::Result<()> {
 
 ```rust
 use artisan_http::{Artful, Shortcut, Plugin};
-use artisan_http::plugins::{StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
+use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -105,6 +106,7 @@ impl Shortcut for MyApiShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
+            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -319,10 +321,22 @@ pub enum DirectionKind {
 | `StartPlugin` | 将 params 初始化到 payload |
 | `AddPayloadBodyPlugin` | 将 payload 序列化为请求体 |
 | `AddRadarPlugin` | 构建 HTTP Request |
+| `ParserPlugin` | 解析响应为 destination（必须挂在链尾） |
 
-> HTTP 执行与响应解析由框架内置链尾核心动作 `IgniteCore` 自动完成（经 `Artful::artful` / `Artful::shortcut` 自动挂载），插件链无需也不可再挂解析插件。插件链最小形态为 `[StartPlugin, ..., AddRadarPlugin]`。
+> HTTP 执行由框架内置链尾核心动作 `IgniteCore` 自动完成（经 `Artful::artful` / `Artful::shortcut` 自动挂载），响应解析由 `ParserPlugin` 承担：**插件链必须在链尾包含 `ParserPlugin`**——忘挂时请求照常发出但不解析（`rocket.destination` 保持 `None`）。插件链最小形态为 `[StartPlugin, ..., AddRadarPlugin, ParserPlugin]`。
 >
-> **从 0.15.x 迁移**：从插件链中删除解析插件一项即可（该类型已删除，老代码将编译失败；旧类型名见 CHANGELOG 0.16.0 条目）。注意：链中位于原解析插件之后的插件，其 `next.call` 之前的逻辑（前向阶段）现运行于请求执行之前（destination / destination_origin 尚为 None、radar 未消费；后向阶段不受影响），此类链型需复核。详见 ARCHITECTURE.md §3.4 事件系统。
+> **从 0.16.0 迁移**：在插件链末尾追加 `Arc::new(ParserPlugin)` 即可。另注意 `Packer::pack` / `Packer::unpack` 新增 `params: &HashMap<String, Value>` 形参（自定义 `Packer` 实现补一个形参即可，通常忽略），且 `JsonDirection` 改经 `rocket.packer.unpack` 解包响应体（默认路径行为不变；将 `rocket.packer` 替换为 `XmlPacker` 后，响应按 XML 解包）。详见 CHANGELOG 0.17.0 条目。
+
+### 内置 Packer 与 Direction
+
+| 类型 | 类别 | 功能 |
+|------|------|------|
+| `JsonPacker` | Packer | JSON 序列化（默认） |
+| `QueryPacker` | Packer | RFC1738 form-urlencoded；`unpack` 支持 `_unpack_raw` 原始模式 |
+| `XmlPacker` | Packer | CDATA 格式 XML（基于 quick-xml）；叶子文本一律字符串 |
+| `JsonDirection` | Direction | 经 `rocket.packer.unpack` 解析（默认） |
+| `NoHttpRequestDirection` | Direction | `NoRequest`：不发起 HTTP 请求 |
+| `OriginResponseDirection` | Direction | `Response`：返回原始响应 |
 
 ## 示例
 

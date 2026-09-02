@@ -1,13 +1,17 @@
 //! 链尾核心动作模块
 //!
-//! 执行 HTTP 请求并解析响应，是洋葱链的固定终点（对齐 artful PHP 的 `ignite()`）。
+//! 仅执行 HTTP 请求，是洋葱链的固定终点（对齐 artful PHP 的 `ignite()`）。
 //!
 //! # 行为
 //!
 //! - 检查 rocket.config.direction，决定是否发起请求
 //! - 执行 HTTP 请求，存入 `rocket.destination_origin`
-//! - 根据 `DirectionKind` 解析响应
-//! - 结果存入 rocket.destination
+//!
+//! # 响应解析
+//!
+//! 响应解析由插件链负责（内置 [`ParserPlugin`](crate::plugins::ParserPlugin)），
+//! `IgniteCore` 不再解析；未挂解析插件时请求正常发出但 `rocket.destination`
+//! 保持 `None`、`rocket.destination_origin` 持有原始响应。
 //!
 //! # 事件分发点
 //!
@@ -18,8 +22,9 @@
 //!   尚未被消费，监听器可经 `rocket.radar` 的 `*_mut` 访问器修改请求；链中缺
 //!   `AddRadarPlugin` 时 radar 为 `None`，事件仍触发；此时改 `rocket.config`
 //!   不影响本次请求）
-//! - `HttpEnd`：请求成功返回后、响应解析之前（只读；响应体消费权属于
-//!   direction 解析，只读视图下不可读 body，仅可读 status / headers）
+//! - `HttpEnd`：请求成功返回后、响应解析（由链中 `ParserPlugin` 等后置逻辑
+//!   完成）之前（只读；响应体消费权属于后续解析，只读视图下不可读 body，
+//!   仅可读 status / headers）
 //! - `HttpError`：请求执行失败时（错误照常向上传播；只读）
 //!
 //! 注意：监听器返回 `Err` 将中止请求流程，错误包装为
@@ -32,8 +37,7 @@
 use async_trait::async_trait;
 
 use crate::Rocket;
-use crate::direction::{Destination, Direction, DirectionKind};
-use crate::directions::JsonDirection;
+use crate::direction::DirectionKind;
 use crate::error::ArtfulError;
 use crate::event::Event;
 use crate::flow_ctrl::CoreAction;
@@ -71,24 +75,10 @@ impl CoreAction for IgniteCore {
             Ok(response) => {
                 rocket.destination_origin = Some(response);
 
-                // HttpEnd：请求成功返回、响应解析之前
+                // HttpEnd：请求成功返回、响应解析（由链中后置插件完成）之前
                 if let Some(events) = &events {
                     events.dispatch(Event::HttpEnd { rocket: &*rocket })?;
                 }
-
-                // 解析响应
-                let destination = match &rocket.config.direction {
-                    DirectionKind::Json => JsonDirection.parse(rocket).await?,
-                    DirectionKind::Response => rocket
-                        .destination_origin
-                        .take()
-                        .map(Destination::Response)
-                        .ok_or(ArtfulError::MissingResponse)?,
-                    DirectionKind::Custom(direction) => direction.clone().parse(rocket).await?,
-                    DirectionKind::NoRequest => Destination::None,
-                };
-
-                rocket.destination = Some(destination);
             }
             Err(err) => {
                 // HttpError：仅 execute 失败触发（MissingRequest 属请求前置失败，不触发）；

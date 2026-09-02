@@ -10,6 +10,7 @@
 //! - 请求头缺失 `Content-Type` 时，按 packer 声明的 [`Packer::content_type`] 补填（不覆盖用户显式设置）
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 
 use crate::Rocket;
 use crate::flow_ctrl::Next;
@@ -27,7 +28,7 @@ impl Plugin for AddPayloadBodyPlugin {
 
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
-            rocket.config.body = Some(rocket.packer.pack(&rocket.payload)?);
+            rocket.config.body = Some(rocket.packer.pack(&rocket.payload, &HashMap::new())?);
 
             // 判重按头名不区分大小写，用户以任意大小写键显式设置的值都不覆盖
             if let Some(ct) = rocket.packer.content_type() {
@@ -121,11 +122,19 @@ mod tests {
         struct NullContentTypePacker;
 
         impl Packer for NullContentTypePacker {
-            fn pack(&self, data: &HashMap<String, Value>) -> crate::Result<String> {
+            fn pack(
+                &self,
+                data: &HashMap<String, Value>,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<String> {
                 Ok(format!("packed:{}", data.len()))
             }
 
-            fn unpack(&self, _data: &str) -> crate::Result<Value> {
+            fn unpack(
+                &self,
+                _data: &str,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<Value> {
                 Ok(Value::Null)
             }
         }
@@ -146,11 +155,19 @@ mod tests {
         struct FailingPacker;
 
         impl Packer for FailingPacker {
-            fn pack(&self, _data: &HashMap<String, Value>) -> crate::Result<String> {
+            fn pack(
+                &self,
+                _data: &HashMap<String, Value>,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<String> {
                 Err(crate::error::ArtfulError::Other("pack failed".to_string()))
             }
 
-            fn unpack(&self, _data: &str) -> crate::Result<Value> {
+            fn unpack(
+                &self,
+                _data: &str,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<Value> {
                 Ok(Value::Null)
             }
         }
