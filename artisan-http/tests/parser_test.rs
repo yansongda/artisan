@@ -254,13 +254,15 @@ const QUERY_RAW_RESPONSE: &str = "accessType=0&signPubKeyCert=-----BEGIN CERTIFI
 async fn query_packer_raw_mode_preserves_cert_characters() {
     // packer 替换为 QueryPacker：请求体按 RFC1738 打包（wiremock 断言）、
     // 响应为 query 串；payload 预置 `_unpack_raw: true` 走 raw 模式 →
-    // 证书字段逐字符无损（`\r\n`、`+`、`/` 均不被解码破坏）
+    // 证书字段逐字符无损（`\r\n`、`+`、`/` 均不被解码破坏）。
+    // 另验证 filter_params 语义：`_unpack_raw` 作为控制参数不进入请求体
+    // （对齐 PHP AddPayloadBodyPlugin 的 filter_params，银联全字段验签下
+    // 多出的字段会导致验签失败）
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
         .and(path("/query"))
         .and(body_string_contains("biz=test"))
-        .and(body_string_contains("_unpack_raw=1"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(QUERY_RAW_RESPONSE, "text/plain"))
         .mount(&mock_server)
         .await;
@@ -297,6 +299,15 @@ async fn query_packer_raw_mode_preserves_cert_characters() {
     // signature 的 `+` 与 `/` 不被破坏
     assert_eq!(json["signature"], "c++EAuub/Rk==");
     assert_eq!(json["accessType"], "0");
+
+    // `_unpack_raw` 控制参数不进入请求体（filter_params 语义）
+    let requests = mock_server.received_requests().await.unwrap();
+    let body = String::from_utf8_lossy(&requests[0].body);
+    assert!(body.contains("biz=test"), "业务字段应在请求体中：{body}");
+    assert!(
+        !body.contains("_unpack_raw"),
+        "控制参数不应进入请求体：{body}"
+    );
 }
 
 // ============ 场景 5：OriginResponseDirection ============

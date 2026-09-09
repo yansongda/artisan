@@ -23,7 +23,12 @@ use crate::packer::Packer;
 /// 输出 `<xml></xml>`）；unpack 基于 quick-xml 事件流，叶子文本一律产出
 /// [`Value::String`]（保真复刻 PHP simplexml → json_encode → json_decode
 /// 全程无数字转换），同名兄弟元素转数组、无文本元素转空对象、混合内容丢弃
-/// 直接文本。
+/// 直接文本，实体引用（含数字字符引用）解引用后并入文本。
+///
+/// 与 PHP 的已知差异：XML 属性被丢弃（PHP 产出 `@attributes` 键）；带命名空间
+/// 前缀的元素名保留原文（如 `ns:a`，PHP json_encode 用 localname `a`）；
+/// 解析结果的键序按字母序（serde_json Map 默认 BTreeMap，PHP json_encode
+/// 保持文档序——JSON 语义上无影响，若下游对序列化字段顺序敏感需自行重排）。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct XmlPacker;
 
@@ -61,7 +66,8 @@ impl Packer for XmlPacker {
     /// # Errors
     ///
     /// 返回错误当 XML 格式非法（有意差异：PHP 侧对应
-    /// simplexml_load_string 失败后抛 TypeError，此处返回结构化错误）。
+    /// simplexml_load_string 失败后由 wrapXml 抛 InvalidArgumentException，
+    /// 此处返回结构化错误）。
     fn unpack(&self, data: &str, _params: &HashMap<String, Value>) -> Result<Value> {
         // 对齐 PHP Arr::wrapXml 的 empty() 语义："" 与 "0" 直接返回空对象
         if data.is_empty() || data == "0" {
@@ -129,7 +135,8 @@ impl Packer for XmlPacker {
                     match stack.last_mut() {
                         Some(element) => element.text.push_str(&text),
                         // 根级文本：空白忽略（对齐 PHP 对缩进/换行的容错），
-                        // 非空白为非法 XML（如 "not-xml"，PHP 抛 TypeError）
+                        // 非空白为非法 XML（如 "not-xml"，PHP 侧 wrapXml 抛
+                        // InvalidArgumentException）
                         None if !text.trim().is_empty() => {
                             return Err(deserialize_error(
                                 "text content outside of root element",
@@ -150,11 +157,25 @@ impl Packer for XmlPacker {
                         ));
                     }
                 }
+                Event::GeneralRef(g) => {
+                    // 实体引用：解引用后并入当前元素文本（对齐 PHP simplexml 的实体
+                    // 解析语义——quick-xml 只给出引用名，解引用由本侧完成）
+                    let decoded = resolve_general_ref(&g)?;
+                    match stack.last_mut() {
+                        Some(element) => element.text.push_str(&decoded),
+                        None if !decoded.trim().is_empty() => {
+                            return Err(deserialize_error(
+                                "entity reference outside of root element",
+                                None,
+                            ));
+                        }
+                        None => {}
+                    }
+                }
                 Event::Eof => break,
-                // Comment / Decl / PI / DocType / GeneralRef 忽略
-                // （有意差异：PHP simplexml 会为注释/处理指令产出假节点；
-                // 实体引用不合并入相邻文本）
-                _ => {}
+                // Comment / Decl / PI / DocType 忽略（SimpleXML 同样不暴露注释与
+                // 处理指令节点，二者 json_encode 结果一致）
+                Event::Comment(_) | Event::Decl(_) | Event::PI(_) | Event::DocType(_) => {}
             }
         }
 
@@ -162,7 +183,8 @@ impl Packer for XmlPacker {
         if !stack.is_empty() {
             return Err(deserialize_error("unclosed element(s) remain", None));
         }
-        // 无根元素（如仅空白输入）：PHP simplexml_load_string 返回 false 后抛 TypeError
+        // 无根元素（如仅空白输入）：PHP simplexml_load_string 返回 false 后
+        // 由 wrapXml 抛 InvalidArgumentException
         root_value.ok_or_else(|| deserialize_error("no root element", None))
     }
 
@@ -212,7 +234,8 @@ impl XmlPacker {
     /// 字符串近似判定：i64/u64/f64 解析成功即视为数值（覆盖 "29"/"1.5"/"1e5"）。
     ///
     /// 已知有意差异：
-    /// - 前导/尾随空白：PHP 8 `is_numeric(" 29 ")` 为 true，此处解析失败为 false；
+    /// - 空白：PHP 8 `is_numeric` 允许尾随空白（前导空白 PHP 8.0 起不允许），
+    ///   此处一律不允许；
     /// - `"inf"`/`"NaN"`：Rust f64 解析成功为 true，PHP 为 false；
     /// - 整值浮点：serde_json `29.0` 序列化为 `"29.0"`，而 PHP `(float)29.0` 为
     ///   `"29"`（precision 截断）。
@@ -282,6 +305,42 @@ impl XmlElement {
 /// XML 元素名（QName）转 String
 fn qname_to_string(name: QName<'_>) -> String {
     String::from_utf8_lossy(name.as_ref()).into_owned()
+}
+
+/// 解引用实体引用（`&name;`，含数字字符引用）为文本
+///
+/// 对齐 PHP simplexml 的实体解析语义（libxml）：
+/// - 五个 XML 预定义实体（`amp`/`lt`/`gt`/`quot`/`apos`）→ 对应字符
+/// - `#N`（十进制）与 `#xH`/`#XH`（十六进制）数字字符引用 → 对应 Unicode 字符
+/// - 其余（未在 DTD 声明的实体名、非法码点）→ 错误
+///   （PHP 侧 libxml 报 "Entity not defined"，simplexml_load_string 返回 false，
+///   wrapXml 抛 InvalidArgumentException；此处返回 [`ArtfulError::XmlDeserializeError`]）
+fn resolve_general_ref(g: &quick_xml::events::BytesRef<'_>) -> Result<String> {
+    let name = g.decode().map_err(to_deserialize_error)?;
+
+    let resolved: String = match name.as_ref() {
+        "amp" => "&".to_string(),
+        "lt" => "<".to_string(),
+        "gt" => ">".to_string(),
+        "quot" => "\"".to_string(),
+        "apos" => "'".to_string(),
+        numeric => {
+            let invalid = || {
+                deserialize_error(
+                    format!("undefined or invalid entity reference: `{name}`"),
+                    None,
+                )
+            };
+            let digits = numeric.strip_prefix('#').ok_or_else(invalid)?;
+            let code = match digits.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).map_err(|_| invalid())?,
+                None => digits.parse::<u32>().map_err(|_| invalid())?,
+            };
+            char::from_u32(code).ok_or_else(invalid)?.to_string()
+        }
+    };
+
+    Ok(resolved)
 }
 
 /// quick-xml 错误 → XmlDeserializeError
@@ -419,7 +478,7 @@ mod tests {
     fn test_xml_packer_unpack_blank_error() {
         let packer = XmlPacker;
 
-        // 仅空白输入：无根元素，PHP simplexml_load_string 失败后抛 TypeError → Err
+        // 仅空白输入：无根元素，PHP 侧 wrapXml 抛 InvalidArgumentException → Err
         assert!(matches!(
             packer.unpack(" ", &HashMap::new()),
             Err(ArtfulError::XmlDeserializeError { .. })
@@ -458,6 +517,71 @@ mod tests {
             result,
             Err(ArtfulError::XmlDeserializeError { .. })
         ));
+    }
+
+    #[test]
+    fn test_xml_packer_unpack_decodes_entities() {
+        let packer = XmlPacker;
+
+        // 预定义实体解引用后并入文本（对齐 PHP simplexml；quick-xml 拆分出的
+        // GeneralRef 事件不能丢弃，否则字符静默丢失）
+        let result = packer
+            .unpack(
+                "<xml><a>x&amp;y</a><b>1&lt;2</b><c>&quot;q&quot;</c><d>&apos;</d></xml>",
+                &HashMap::new(),
+            )
+            .unwrap();
+        assert_eq!(result["a"], "x&y");
+        assert_eq!(result["b"], "1<2");
+        assert_eq!(result["c"], "\"q\"");
+        assert_eq!(result["d"], "'");
+    }
+
+    #[test]
+    fn test_xml_packer_unpack_decodes_numeric_char_refs() {
+        let packer = XmlPacker;
+
+        // 数字字符引用（十进制/十六进制）解引用（部分网关以此编码中文）
+        let result = packer
+            .unpack(
+                "<xml><a>&#20013;&#25991;</a><b>&#x4E2D;&#x6587;</b></xml>",
+                &HashMap::new(),
+            )
+            .unwrap();
+        assert_eq!(result["a"], "中文");
+        assert_eq!(result["b"], "中文");
+    }
+
+    #[test]
+    fn test_xml_packer_unpack_rejects_undefined_entity() {
+        let packer = XmlPacker;
+
+        // 未定义实体：libxml 报 Entity not defined，simplexml 返回 false 后
+        // wrapXml 抛 InvalidArgumentException → 此处 XmlDeserializeError
+        assert!(matches!(
+            packer.unpack("<xml><a>&foo;</a></xml>", &HashMap::new()),
+            Err(ArtfulError::XmlDeserializeError { .. })
+        ));
+    }
+
+    #[test]
+    fn test_xml_packer_unpack_rejects_invalid_char_ref() {
+        let packer = XmlPacker;
+
+        // 非法数字引用：超码点范围 / 空数字 / 非数字 → XmlDeserializeError
+        for input in [
+            "<xml><a>&#x110000;</a></xml>",
+            "<xml><a>&#;</a></xml>",
+            "<xml><a>&#xZZ;</a></xml>",
+        ] {
+            assert!(
+                matches!(
+                    packer.unpack(input, &HashMap::new()),
+                    Err(ArtfulError::XmlDeserializeError { .. })
+                ),
+                "应拒绝非法字符引用：{input}"
+            );
+        }
     }
 
     #[test]

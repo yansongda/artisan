@@ -43,7 +43,9 @@ impl Plugin for AddRadarPlugin {
         if let Some(body) = &rocket.config.body {
             request_builder = request_builder.body(body.clone());
         } else if !rocket.payload.is_empty() {
-            let body = rocket.packer.pack(&rocket.payload, &HashMap::new())?;
+            // 对齐 PHP filter_params：剔除 `_` 前缀控制参数与 null 值后再序列化（同 AddPayloadBodyPlugin）
+            let filtered = crate::plugins::filter_params(&rocket.payload);
+            let body = rocket.packer.pack(&filtered, &HashMap::new())?;
 
             // 判重按头名不区分大小写（该分支位于 headers 遍历之后，直接补到 request_builder）
             if !rocket.has_header("Content-Type") {

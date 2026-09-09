@@ -62,13 +62,19 @@ impl Plugin for ParserPlugin {
         next.call(rocket).await?;
 
         // 分发解析方向（0.16.0 曾内联于 IgniteCore Ok 分支，0.17.0 起由本插件承担）
-        // 守卫：destination 只能是 None 或 Response（对齐 PHP 9208）
-        if let Some(Destination::Json(_)) = rocket.destination {
-            return Err(ArtfulError::InvalidParameter {
-                param: "destination".to_string(),
-                message: "ParserPlugin 中 Rocket 的 destination 只能是 None 或 Response"
-                    .to_string(),
-            });
+        // 守卫：destination 只能是 None 或 Response（对齐 PHP 9208）。
+        // 穷举 match：枚举新增变体时此处编译失败，强制重新评估合法性，避免静默漏拦
+        match &rocket.destination {
+            Some(Destination::Json(_)) => {
+                return Err(ArtfulError::InvalidParameter {
+                    param: "destination".to_string(),
+                    message: "ParserPlugin 中 Rocket 的 destination 只能是 None 或 Response"
+                        .to_string(),
+                });
+            }
+            // Some(Destination::None) 放行：NoRequest 等链路可能已写入该值，
+            // 双 ParserPlugin 链不误杀（经 Artful::artful 入口归一后无差异）
+            None | Some(Destination::Response(_)) | Some(Destination::None) => {}
         }
 
         let destination = match &rocket.config.direction {

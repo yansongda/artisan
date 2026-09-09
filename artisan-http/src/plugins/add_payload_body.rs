@@ -28,7 +28,10 @@ impl Plugin for AddPayloadBodyPlugin {
 
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
-            rocket.config.body = Some(rocket.packer.pack(&rocket.payload, &HashMap::new())?);
+            // 对齐 PHP filter_params：剔除 `_` 前缀控制参数与 null 值后再序列化，
+            // 避免 `_unpack_raw` 等内部参数进入发往网关的请求体（银联等对全字段验签）
+            let filtered = crate::plugins::filter_params(&rocket.payload);
+            rocket.config.body = Some(rocket.packer.pack(&filtered, &HashMap::new())?);
 
             // 判重按头名不区分大小写，用户以任意大小写键显式设置的值都不覆盖
             if let Some(ct) = rocket.packer.content_type() {
@@ -97,6 +100,26 @@ mod tests {
 
         assert!(rocket.config.body.is_none());
         assert!(!rocket.config.headers.contains_key("Content-Type"));
+    }
+
+    #[tokio::test]
+    async fn filters_underscore_keys_and_nulls_from_body() {
+        // 对齐 PHP filter_params：`_` 前缀控制参数与 null 值不进入请求体
+        // （如银联 `_unpack_raw` 只影响本侧解包，不能随报文发给网关）
+        let params = HashMap::from([
+            ("_unpack_raw".to_string(), json!(true)),
+            ("_secret".to_string(), json!("x")),
+            ("null_field".to_string(), json!(null)),
+            ("order_id".to_string(), json!("123")),
+        ]);
+        let mut rocket = Rocket::new(params);
+        rocket.merge_params_to_payload();
+
+        drive(&mut rocket).await.unwrap();
+
+        let body = rocket.config.body.expect("body should be packed");
+        let value: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value, json!({"order_id": "123"}));
     }
 
     #[tokio::test]
