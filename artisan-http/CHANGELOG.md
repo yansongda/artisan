@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `QueryPacker`：RFC1738（`application/x-www-form-urlencoded`）编解码 Packer；`unpack` 支持 `_unpack_raw` 原始模式（跳过 URL 解码，透传原始键值文本，对齐 PHP artful）
-- `XmlPacker`：CDATA 格式 XML Packer（基于 quick-xml 0.41）：pack 输出 `<xml>` 根元素、叶子值以 `<![CDATA[...]]>` 承载；unpack 结果对齐 PHP `simplexml → json_encode → json_decode` 语义（叶子文本一律 `Value::String`、无文本元素/自闭合为空 Object、同名兄弟第二次出现转数组、混合内容丢弃直接文本、实体引用（含数字字符引用）解引用后并入文本，未定义实体报错）
+- `QueryPacker`：RFC1738（`application/x-www-form-urlencoded`）编解码 Packer；`unpack` 支持 `_unpack_raw` 原始模式（跳过 URL 解码，透传原始键值文本，对齐 PHP artful）。编码语义对齐 http_build_query 源码（false→`"0"`、null→整键跳过）、pack 顶层键升序输出（确定性）；解码复刻 parse_str 顶层名修饰 quirk，均经 PHP 8.5.10 Docker 实测验证
+- `XmlPacker`：CDATA 格式 XML Packer（基于 quick-xml 0.41）：pack 输出 `<xml>` 根元素、叶子值以 `<![CDATA[...]]>` 承载、顶层键升序输出（确定性）；unpack 结果对齐 PHP `simplexml → json_encode → json_decode` 语义（叶子文本一律 `Value::String`、无文本元素/自闭合为空 Object、同名兄弟第二次出现转数组、单元素取值复刻 PHP `_get_base_node_value`（首直接文本非空白→拼接全部直接文本、子元素丢弃；否则子元素对象、直接文本丢弃；根元素恒为对象）、实体引用（含数字字符引用）解引用后并入文本，未定义实体与 XML 1.0 非法字符引用报错），全部经 PHP 8.5.10 Docker 实测对齐
 - `NoHttpRequestDirection` / `OriginResponseDirection`：`NoRequest` / `Response` 方向的独立 `Direction` 实现（0.16.0 起这两个方向仅由链尾核心动作短路处理，本版本补齐实现类型，供 `ParserPlugin` 分发与用户直接使用）
 - `ParserPlugin` 回归：后置响应解析插件（0.16.0 曾随解析内置进 `IgniteCore` 而删除，本版本恢复为插件形态，见下 Changed）；带守卫：`rocket.destination` 只能是 `None` 或 `Destination::Response`，否则返回 `InvalidParameter`（对齐 PHP artful 9208）
 - 错误变体 `XmlSerializeError` / `XmlDeserializeError`（XML 序列化/解析失败）

@@ -13,6 +13,13 @@ use crate::error::ArtfulError;
 /// 实际行为是"用 [`Rocket::packer`] 解包响应体"（对齐 PHP `CollectionDirection::guide()`）。
 /// 默认 packer 为 [`JsonPacker`](crate::packers::JsonPacker) 时即 JSON 解析；
 /// 设置 [`XmlPacker`](crate::packers::XmlPacker) 后响应按 XML 解包。
+///
+/// # 响应体编码
+///
+/// 响应体经 [`reqwest::Response::text`] 以 UTF-8 读取（响应声明了 charset 时按
+/// 声明解码），非 UTF-8 报文报 [`ArtfulError::RequestFailed`]；PHP 侧
+/// `(string)$response->getBody()` 无编码限制。属已声明差异（当前主流网关均为
+/// UTF-8，影响限于 GBK 等历史编码报文）。
 #[derive(Debug, Clone)]
 pub struct JsonDirection;
 

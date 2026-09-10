@@ -72,8 +72,11 @@ impl Plugin for ParserPlugin {
                         .to_string(),
                 });
             }
-            // Some(Destination::None) 放行：NoRequest 等链路可能已写入该值，
-            // 双 ParserPlugin 链不误杀（经 Artful::artful 入口归一后无差异）
+            // Some(Destination::None) 放行：NoRequest 链路的 NoHttpRequestDirection
+            // 会写入该值。注：“双 ParserPlugin 链不误杀”仅对 NoRequest 方向成立——
+            // Json 方向内层先写 Some(Json)，外层守卫将报 InvalidParameter（恰作为
+            // 配置错误的检测）；Response 方向内层已消费 destination_origin，外层报
+            // MissingResponse。多数方向下双挂载必然报错。
             None | Some(Destination::Response(_)) | Some(Destination::None) => {}
         }
 

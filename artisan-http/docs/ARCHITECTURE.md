@@ -949,12 +949,17 @@ impl Plugin for ParserPlugin {
         // 后置插件：前向直接穿透，HTTP 完成后在后向阶段解析
         next.call(rocket).await?;
 
-        // 守卫：destination 只能是 None 或 Response（对齐 PHP artful 9208）
-        if let Some(Destination::Json(_)) = rocket.destination {
-            return Err(ArtfulError::InvalidParameter {
-                param: "destination".to_string(),
-                message: "ParserPlugin 中 Rocket 的 destination 只能是 None 或 Response".to_string(),
-            });
+        // 守卫：destination 只能是 None 或 Response（对齐 PHP artful 9208）。
+        // 穷举 match：枚举新增变体时此处编译失败，强制重新评估合法性，避免静默漏拦
+        match &rocket.destination {
+            Some(Destination::Json(_)) => {
+                return Err(ArtfulError::InvalidParameter {
+                    param: "destination".to_string(),
+                    message: "ParserPlugin 中 Rocket 的 destination 只能是 None 或 Response"
+                        .to_string(),
+                });
+            }
+            None | Some(Destination::Response(_)) | Some(Destination::None) => {}
         }
 
         // 按 direction 分发解析（各内置方向对应独立 Direction 实现）

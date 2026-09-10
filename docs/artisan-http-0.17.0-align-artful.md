@@ -4,7 +4,7 @@
 > **作者**：GLM-5.3-Flash + yansongda
 > **状态**：经过人工审核确认
 > **关联文档**：`docs/artisan-http-0.16.0-ignite-core.md`（0.16.0 将 ParserPlugin 合并进 IgniteCore 的决策，本方案对其做有意修正）
-> **修订记录**：2026-09-01 初版经用户批准；同日 plan-reviewer 初审（结论：拒绝执行，1 BLOCKER + 5 MAJOR）后逐条源码复核（全部属实、零驳回）并修订：补 Task 2 调用点清单（add_radar.rs/integration_test.rs）、XmlPacker pack 改 is_numeric 值判定、unpack 空元素→空 Object、quick-xml 钉 0.41（MSRV）、Task 3 spike 降级协议（本机无 PHP）、examples 补 custom_plugin/event、根 CHANGELOG 等详见 plan 文档同日修订记录；2026-09-02 深入 review 后修复：① unpack 增补 `Event::GeneralRef` 实体解引用（预定义实体/数字字符引用，未定义实体报错——此前实体被静默丢弃致数据损坏）；② 复刻 PHP `filter_params`（pack 前剔除 `_` 前缀键与 null 值，`_unpack_raw` 等控制参数不再进入请求体）；③ 修正文档中 PHP 侧异常类型描述（实为 supports `Arr::wrapXml` 抛 `InvalidArgumentException`，非 `TypeError`）与"PHP 为注释/PI 产出假节点"的错误说法（SimpleXML 同样不暴露注释/PI 节点，双方一致）；④ 补命名空间前缀/键序两条已声明差异；⑤ ParserPlugin 守卫改穷举 match（枚举加变体时编译失败，避免静默漏拦）。
+> **修订记录**：2026-09-01 初版经用户批准；同日 plan-reviewer 初审（结论：拒绝执行，1 BLOCKER + 5 MAJOR）后逐条源码复核（全部属实、零驳回）并修订：补 Task 2 调用点清单（add_radar.rs/integration_test.rs）、XmlPacker pack 改 is_numeric 值判定、unpack 空元素→空 Object、quick-xml 钉 0.41（MSRV）、Task 3 spike 降级协议（本机无 PHP）、examples 补 custom_plugin/event、根 CHANGELOG 等详见 plan 文档同日修订记录；2026-09-02 深入 review 后修复：① unpack 增补 `Event::GeneralRef` 实体解引用（预定义实体/数字字符引用，未定义实体报错——此前实体被静默丢弃致数据损坏）；② 复刻 PHP `filter_params`（pack 前剔除 `_` 前缀键与 null 值，`_unpack_raw` 等控制参数不再进入请求体）；③ 修正文档中 PHP 侧异常类型描述（实为 supports `Arr::wrapXml` 抛 `InvalidArgumentException`，非 `TypeError`）与"PHP 为注释/PI 产出假节点"的错误说法（SimpleXML 同样不暴露注释/PI 节点，双方一致）；④ 补命名空间前缀/键序两条已声明差异；⑤ ParserPlugin 守卫改穷举 match（枚举加变体时编译失败，避免静默漏拦）。2026-09-10 Docker（PHP 8.5.10）全项实测复核后修复：① QueryPacker::pack 对齐 http_build_query 源码语义（false→"0"、null→整键跳过，此前按 `(string)` 强转推导有误，实为 IS_FALSE/IS_NULL 专用分支）；② XmlPacker::unpack 混合内容复刻 php-src `_get_base_node_value`（首直接文本非空白→拼接全部直接文本、子元素丢弃，实测 `<a>1<b>2</b>3</a>`→"13"；空白首文本或子元素先行→对象分支）；③ 数字字符引用按 XML 1.0 Char 集合过滤（`&#0;`/`&#x8;`/`&#xFFFE;` 报错，对齐 libxml xmlParseCharRef）；④ unpack raw 无 `=` 段在 PHP 8 + strict_types 下实测抛 TypeError，Rust 容错行为改标有意差异；⑤ parse_str 顶层名修饰精化（前导空格忽略、内层 index 不修饰、修饰后空键丢弃，全部实测）；⑥ pack 顶层键升序排序（确定性输出，签名场景可复现）；⑦ 撤销命名空间前缀差异声明（实测 PHP 8.5 同样保留原文）；⑧ is_numeric 移动靶注释更新（实测 PHP 8.5 前导空白 true、".5" true）。
 
 ---
 
@@ -144,9 +144,9 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
 
 | 方法 | 行为 |
 |---|---|
-| `pack` | RFC1738：`k=v&k2=v2`，空格→`+`，手写 percent-encode（无新依赖）。`Bool(true)`→`"1"`、`Bool(false)`→`""`、`Null`→`""`（对齐 PHP `http_build_query` 标量强转）；Number 原样（已知差异：serde_json 整值浮点 `29.0` → `"29.0"`，PHP 为 `"29"`，进有意差异清单）；嵌套容器复刻 PHP `k[sub]` 递归语法（数组按下标 `a[0]=v`，空容器跳过）；输出键序不保证（HashMap 无序为既有 trait 设计） |
-| `unpack` 默认 | URL 解码、`+`→空格；key 中 `.`/空格→`_`（PHP `parse_str` quirk，**复刻**）；`k[sub]=v` → 嵌套 Object、`k[]=v` → Array 追加；值一律 `Value::String` |
-| `unpack` raw（`params["_unpack_raw"]` truthy 时） | 按 `&` 切段、首个 `=` 分割，**零解码**（银联 `signPubKeyCert` 含 `\r\n`/`+`/`/` 不被破坏）；空串或不含 `=` → 空对象；无 `=` 的混合段 key/value 行为以 spike 实测 PHP 为准（推断） |
+| `pack` | RFC1738：`k=v&k2=v2`，空格→`+`，手写 percent-encode（无新依赖）。`Bool(true)`→`"1"`、`Bool(false)`→`"0"`（http_build_query 的 IS_TRUE/IS_FALSE 专用分支，实测 PHP 8.5）、`Null`→整键跳过（IS_NULL 分支 `continue`）；Number 原样（已知差异：serde_json 整值浮点 `29.0` → `"29.0"`，PHP 为 `"29"`，进有意差异清单）；嵌套容器复刻 PHP `k[sub]` 递归语法（数组按下标 `a[0]=v`，空容器与 null 跳过）；顶层键升序排序后输出（**确定性**，签名场景可复现；有意差异：PHP 保持数组插入序） |
+| `unpack` 默认 | URL 解码、`+`→空格；key 按 PHP `parse_str` quirk（实测 8.5）修饰**顶层**变量名：前导 `' '` 忽略、`.`/空格→`_`、首个 `[` 之后原样保留（`k[su.b x]` 内层不修饰）；修饰后空键整段丢弃（`parse_str('=x')`→[]）；`k[sub]=v` → 嵌套 Object、`k[]=v` → Array 追加；值一律 `Value::String` |
+| `unpack` raw（`params["_unpack_raw"]` truthy 时） | 按 `&` 切段、首个 `=` 分割，**零解码**（银联 `signPubKeyCert` 含 `\r\n`/`+`/`/` 不被破坏）；空串或不含 `=` → 空对象；无 `=` 的混合畸形段：Rust 容错 key `""`/value 去首字符（**有意差异**——实测 PHP 8.5 + supports strict_types 直接抛 `TypeError`） |
 | truthy 判定 | `Bool(true)` / `Number≠0` / 非`""`非`"0"` 的 `String` / 非空 `Array`·`Object`（对齐 PHP truthy：`"0"`、空容器为 falsy） |
 | `content_type` | `Some("application/x-www-form-urlencoded")` |
 
@@ -154,8 +154,8 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
 
 | 方法 | 行为 |
 |---|---|
-| `pack` | `<xml><k><![CDATA[v]]></k><n>29</n></xml>`：**值判定**对齐 PHP `is_numeric($val)`（实测源码 `supports/Collection.php:288-301`）——`Number` 或符合 PHP `is_numeric` 语义的数值字符串（i64/u64/f64 解析成功，近似覆盖 `"29"`/`"1.5"`/`"1e5"`；边角差异：前导空白 PHP true/Rust false、`"inf"`/`"NaN"` Rust true/PHP false，入有意差异清单）→ 纯文本节点，其余 → CDATA；**CDATA 分支字符串化规则对齐 PHP 隐式转换**：`Bool(true)`→`"1"`、`Bool(false)`→`""`、`Null`→`""`（与 QueryPacker pack 规则一致）；**空 payload 输出 `<xml></xml>` 而非空串**（与 JsonPacker 不同，已验证）；仅支持一维标量（对齐 PHP 名义语义），嵌套容器 → `XmlSerializeError`（有意差异：PHP 产出 `<![CDATA[Array]]>` 垃圾值，Rust 显式报错）。已知边界差异：serde_json 整值浮点 `29.0` 输出 `"29.0"` 而 PHP `(float)29.0` 为 `"29"`（进有意差异清单）；键不做 XML 转义（对齐 PHP 现状） |
-| `unpack` | quick-xml 事件流解析：忽略根元素名、CDATA 剥离、属性丢弃、重复标签→`Value::Array`、**叶子文本一律 `Value::String`**（保真复刻：PHP simplexml→json_encode→json_decode 全程无数字转换，叶子文本实为字符串；artful `XmlPackerTest::testUnpack` 的 `assertEquals(['age'=>29],...)` 通过系 PHPUnit 宽松比较 `'29' == 29`，不能证明数字语义——故不从 artful 测试名义期望推断类型）、**无文本元素（`<a></a>` 与自闭合 `<a/>`）→ 该 key 值为空 `Value::Object`**（对齐 PHP SimpleXML→json 怪癖）、`""` 与 `"0"` → 空 Object（对齐 PHP `empty()` 语义，`"0" 为 falsy）、仅空白输入 → `XmlDeserializeError`（PHP 侧 simplexml 失败后 wrapXml 抛 InvalidArgumentException）、混合内容（元素同时含文本与子元素）丢弃直接文本（对齐 PHP）；解析失败 → `XmlDeserializeError`（PHP 侧抛 InvalidArgumentException，Rust 以错误类型优雅表达，属**有意差异**）；实体引用（含数字字符引用）解引用后并入文本（未定义实体报错，对齐 libxml）。已知差异：XML 属性被丢弃（PHP 产出 `@attributes` 键）；带命名空间前缀的元素名保留原文（PHP 用 localname）；解析结果键序按字母序（serde_json Map 默认 BTreeMap，PHP 保持文档序，JSON 语义上无影响） |
+| `pack` | `<xml><k><![CDATA[v]]></k><n>29</n></xml>`：**值判定**对齐 PHP `is_numeric($val)`（实测源码 `supports/Collection.php` + Docker PHP 8.5.10）——`Number` 或符合 PHP `is_numeric` 语义的数值字符串（i64/u64/f64 解析成功，近似覆盖 `"29"`/`"1.5"`/`"1e5"`；边角差异：前导空白 PHP 8.5 实测 true/Rust false（8.0~8.4 为 false，移动靶）、`".5"` PHP true/Rust false、`"inf"`/`"NaN"` Rust true/PHP false，入有意差异清单）→ 纯文本节点，其余 → CDATA；**CDATA 分支字符串化对齐 PHP toXml 拼接转换（实测）**：`Bool(true)`→`"1"`、`Bool(false)`→`""`、`Null`→`""`（注意与 QueryPacker 不同：http_build_query 的 false 为 `"0"`，toXml 的 false 为空 CDATA）；**空 payload 输出 `<xml></xml>` 而非空串**（与 JsonPacker 不同，已验证）；顶层键升序排序后输出（**确定性**，有意差异：PHP 保持数组插入序）；仅支持一维标量（对齐 PHP 名义语义），嵌套容器 → `XmlSerializeError`（有意差异：PHP 产出 `<![CDATA[Array]]>` 垃圾值，Rust 显式报错）。已知边界差异：serde_json 整值浮点 `29.0` 输出 `"29.0"` 而 PHP `(float)29.0` 为 `"29"`（进有意差异清单）；键不做 XML 转义（对齐 PHP 现状） |
+| `unpack` | quick-xml 事件流解析：忽略根元素名、CDATA 剥离、属性丢弃、重复标签→`Value::Array`、**叶子文本一律 `Value::String`**（保真复刻：PHP simplexml→json_encode→json_decode 全程无数字转换，叶子文本实为字符串；artful `XmlPackerTest::testUnpack` 的 `assertEquals(['age'=>29],...)` 通过系 PHPUnit 宽松比较 `'29' == 29`，不能证明数字语义——故不从 artful 测试名义期望推断类型）、**无文本元素（`<a></a>` 与自闭合 `<a/>`）→ 该 key 值为空 `Value::Object`**（对齐 PHP SimpleXML→json 怪癖）、`""` 与 `"0"` → 空 Object（对齐 PHP `empty()` 语义，`"0" 为 falsy）、仅空白输入 → `XmlDeserializeError`（PHP 侧 simplexml 失败后 wrapXml 抛 InvalidArgumentException）、**混合内容复刻 php-src `_get_base_node_value`**（首个直接内容为文本且非全空白 → 拼接全部直接文本字符串、子元素丢弃，实测 `<a>1<b>2</b>3</a>` → `"13"`；首内容为空白文本或子元素 → 对象分支、直接文本丢弃，实测 `<a> <b>x</b> </a>` → `{"b":"x"}`；根元素恒为对象，根直接文本丢弃）；解析失败 → `XmlDeserializeError`（PHP 侧抛 InvalidArgumentException，Rust 以错误类型优雅表达，属**有意差异**）；实体引用（含数字字符引用）解引用后并入文本（未定义实体与 XML 1.0 非法字符引用——实测 `&#8;`/`&#xFFFE;` libxml 报 invalid xmlChar value——报错）。已知差异：XML 属性被丢弃（实测 PHP 8.5 仅对 JSON 对象形态节点——根与无文本/空子元素——产出 `@attributes` 键）；解析结果键序按字母序（serde_json Map 默认 BTreeMap，PHP 保持文档序，JSON 语义上无影响）；命名空间前缀实测双方一致（均保留原文，如 `ns:a`） |
 | `content_type` | `Some("application/xml")` |
 
 **依赖**：新增 `quick-xml = "0.41"`（**钉定**：0.42.0 的 rust_version=1.86 超出 workspace MSRV 1.85，0.41.x 为 1.79 兼容；不启用 serde/encoding feature——已验证 default features 为空集）；query 编解码手写、不引入 `percent-encoding`/`serde_urlencoded`。
@@ -187,7 +187,7 @@ let plugins: Vec<Arc<dyn Plugin>> = vec![start, method_url, add_payload_body, ad
 - **error.rs**：新增 `XmlSerializeError { message, source }` / `XmlDeserializeError { message, source }`（对齐 `Json*` 命名，不占用 `#[from]`）；模块 doc 清单与底部单测同步。`XmlPacker::pack` 遇嵌套容器等无法序列化场景走 `XmlSerializeError`（保证变体有构造点，对齐 `JsonSerializeError` 被 `JsonPacker::pack` 使用的先例）；query 编码类错误复用现有 `InvalidParameter`。
 - **导出注册**：`packers/mod.rs`、`directions/mod.rs`、`plugins/mod.rs` 模块声明 + Markdown 表格；`lib.rs` 顶层 `pub use` 追加 5 个新类型 + `assert_send_sync` 契约测试追加。根 facade `pub use artisan_http as http` 整体导出，无需修改。
 - **文档同步**：CHANGELOG（0.17.0 BREAKING 条目 + 迁移说明）、根与 artisan-http 的 README/README.zh-CN（双语同步策略；**注意反转 0.16.0 写入的规范性段落**——如 `artisan-http/README.md:324` "插件链无需且不可挂解析插件"，0.17.0 语义相反）、根 `CHANGELOG.md`（facade 透传条目，对齐 0.16.0 先例）、AGENTS.md（插件清单/测试文件表修正 drift：`Tests across 7 files` 实为 6（5 现存 + parser_test）、"Tests in tests/ not inline" 与现状不符、测试文件表列出不存在的文件且缺席 event_test.rs）、`docs/ARCHITECTURE.md`；`lib.rs` 顶层 doc（关键类型表/内置插件表/doctest）同步。
-- **测试策略**：单测内联（query/xml 编解码边界、direction 透传/报错、守卫等价物）；集成测试 wiremock（全链路：query pack → xml 响应 unpack → raw 模式证书无损）；`examples/` 编译验证；与 artful `tests/Packer/*Test.php`、`tests/Direction/*Test.php`、`tests/Plugin/ParserPluginTest.php` 的断言值逐条对齐作为验收基准（已验证：读过 PHP 测试源码，断言值已固化进 plan 文档 References）。**PHP spike 降级**：本机无 PHP（2026-09-01 实测 `php: command not found`），PHP 侧 edge（raw 混合段、XML 数字/空元素 roundtrip）按已记录推断值实现并在测试/文档标注"推断，未经实测"。
+- **测试策略**：单测内联（query/xml 编解码边界、direction 透传/报错、守卫等价物）；集成测试 wiremock（全链路：query pack → xml 响应 unpack → raw 模式证书无损）；`examples/` 编译验证；与 artful `tests/Packer/*Test.php`、`tests/Direction/*Test.php`、`tests/Plugin/ParserPluginTest.php` 的断言值逐条对齐作为验收基准（已验证：读过 PHP 测试源码，断言值已固化进 plan 文档 References）。**PHP spike**：本机无 PHP 期间（2026-09-01 实测 `php: command not found`）edge 项按推断实现并标注；2026-09-10 起经 Docker `registry.cn-shenzhen.aliyuncs.com/yansongda/php:cli-8.5-alpine`（PHP 8.5.10）全项实测，推断项已全部转实测（含 raw 混合段、XML 混合内容/数字字符引用/空元素 roundtrip，见修订记录）。
 
 ---
 
@@ -222,7 +222,7 @@ Wave 4  文档与示例（3.4）                         —— 收尾
 | 推翻 0.16.0 架构决策引发反复 | 中 | 本方案为**有意修正**而非回退：保留 0.16.0 拆出的 `IgniteCore`（HTTP 执行），仅把"解析"归还插件；设计文档留档理由 |
 | XML/query quirk 与 PHP 不一致（部分 edge 无 PHP 环境实测） | 中 | 验收以 artful 测试断言逐条对齐；无 PHP 环境的 edge（raw 混合段、XML roundtrip 细节）按推断值实现并显式标注"推断，未经实测"；无法对齐处（如非法 XML 的 InvalidArgumentException）在 rustdoc 显式标注"有意差异"清单 |
 | `Packer` trait 加 params 破坏自定义实现 | 中 | CHANGELOG 迁移说明给出 before/after；0.x 阶段一次到位避免二次破坏 |
-| HashMap 无序导致 pack 输出键序不稳定 | 低 | pack 类单测断言顺序无关（roundtrip / 切片排序比对）；文档标注"pack 输出键序不保证" |
+| pack 输出键序与 PHP 插入序不同 | 低 | 顶层键升序排序后输出（确定性，签名场景可复现）；与 PHP 数组插入序的差异已写入 rustdoc 有意差异清单 |
 | quick-xml 新依赖（供应链/体积） | 低 | 钉 `0.41`（rust_version 1.79 兼容 workspace MSRV 1.85，0.42 需 1.86 不采用）；default features 空集（无 serde），锁定版本 |
 
 ---
@@ -233,8 +233,8 @@ Wave 4  文档与示例（3.4）                         —— 收尾
 |---|---|---|
 | `NoHttpRequestDirection.guide` 透传 + `should_do_http_request` 豁免 | struct + IgniteCore 前置短路 | 已验证（读过源码） |
 | `OriginResponseDirection.guide` null → 9303 | struct + `MissingResponse` | 已验证 |
-| `QueryPacker` RFC1738 / `_unpack_raw` 零解码 / parse_str 点号转下划线 | query.rs 三态 | 已验证（vendored supports 通读）；混合段无 `=` edge 为推断（本机无 PHP，无法 spike 实测） |
-| `XmlPacker` CDATA/is_numeric 值判定/空 payload→`<xml></xml>`/叶子文本一律 String/空元素→空 Object | xml.rs | unpack 语义经 hakre 系列（SimpleXML+json_encode 权威分析）+ supports `Arr::wrapXml` 源码复核：PHP 全程无数字转换、叶子文本实为字符串（artful 测试名义期望数字系 PHPUnit 宽松比较）；`"010"`/`@attributes` 等 roundtrip 细节为推断（无 PHP 环境） |
+| `QueryPacker` RFC1738 / `_unpack_raw` 零解码 / parse_str 顶层名修饰 | query.rs 三态 | 2026-09-10 Docker（PHP 8.5.10）全项实测：bool/null 编码（http_build_query IS_FALSE/IS_NULL 分支）、raw 混合段（PHP 8 strict_types 抛 TypeError）、parse_str mangle/空键/嵌套 index 均已验证 |
+| `XmlPacker` CDATA/is_numeric 值判定/空 payload→`<xml></xml>`/叶子文本一律 String/空元素→空 Object | xml.rs | 混合内容经 php-src `sxe_get_prop_hash`/`_get_base_node_value` 源码 + Docker（PHP 8.5.10）实测钉死（首文本非空白→文本拼接丢子元素；逆之对象分支）；`@attributes`/命名空间前缀/数字字符引用全部实测验证 |
 | `ParserPlugin` 后置、params 未过滤、9208 守卫 | plugins/parser.rs | 已验证 |
 | `CollectionDirection.guide` 经 `$packer->unpack` | JsonDirection 改造 | 已验证 |
 | PHP 测试断言值（XmlPackerTest/QueryPackerTest/ParserPluginTest 等） | Rust 测试期望值 | 已验证（读过测试源码，值已固化进 plan） |

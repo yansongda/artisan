@@ -11,7 +11,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use quick_xml::name::QName;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::Result;
 use crate::error::ArtfulError;
@@ -19,16 +19,23 @@ use crate::packer::Packer;
 
 /// XML 序列化器
 ///
-/// pack 产出 `<xml>` 包裹的单层节点：数值为纯文本，其余标量为 CDATA（空数据
-/// 输出 `<xml></xml>`）；unpack 基于 quick-xml 事件流，叶子文本一律产出
-/// [`Value::String`]（保真复刻 PHP simplexml → json_encode → json_decode
-/// 全程无数字转换），同名兄弟元素转数组、无文本元素转空对象、混合内容丢弃
-/// 直接文本，实体引用（含数字字符引用）解引用后并入文本。
+/// pack 产出 `<xml>` 包裹的单层节点（顶层键按字典序升序输出，确定性）：数值为
+/// 纯文本，其余标量为 CDATA（空数据输出 `<xml></xml>`）；unpack 基于 quick-xml
+/// 事件流，叶子文本一律产出 [`Value::String`]（保真复刻 PHP simplexml →
+/// json_encode → json_decode 全程无数字转换），同名兄弟元素转数组、无文本元素
+/// 转空对象。单元素取值复刻 PHP `_get_base_node_value`：首个直接内容为文本且
+/// **非全空白**时输出全部直接文本的拼接字符串（子元素被丢弃，实测 PHP 8.5
+/// `<a>1<b>2</b>3</a>` → `"13"`）；否则输出子元素对象（混合内容的直接文本
+/// 被丢弃，实测 `<a> <b>x</b> </a>` → `{"b":"x"}`）；实体引用（含数字字符
+/// 引用）解引用后并入文本，XML 1.0 非法字符引用与未定义实体报错（对齐 libxml）。
+/// 根元素恒为 JSON 对象（实测 `<xml>foo<a>1</a></xml>` → `{"a":"1"}`，根直接
+/// 文本丢弃；单文本根的 PHP `{"0":"foo"}` 怪癖有意不复刻，输出字符串 `"foo"`）。
 ///
-/// 与 PHP 的已知差异：XML 属性被丢弃（PHP 产出 `@attributes` 键）；带命名空间
-/// 前缀的元素名保留原文（如 `ns:a`，PHP json_encode 用 localname `a`）；
-/// 解析结果的键序按字母序（serde_json Map 默认 BTreeMap，PHP json_encode
-/// 保持文档序——JSON 语义上无影响，若下游对序列化字段顺序敏感需自行重排）。
+/// 与 PHP 的已知差异：XML 属性被丢弃（PHP 8.5 仅对 JSON 对象形态的节点——根
+/// 元素与无文本/空子元素——产出 `@attributes` 键）；解析结果的键序按字母序
+/// （serde_json Map 默认 BTreeMap，PHP 保持文档序，JSON 语义上无影响）；
+/// 命名空间前缀实测双方一致（均保留原文，如 `ns:a`）；pack 键序为字典序
+/// （PHP 保持数组插入序），签名场景请复核拼接顺序。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct XmlPacker;
 
@@ -52,8 +59,11 @@ impl Packer for XmlPacker {
         }
 
         let mut out = String::from("<xml>");
-        for (key, value) in data {
-            out.push_str(&Self::render_entry(key, value)?);
+        // 顶层键升序排序后输出（确定性；PHP 保持数组插入序，见模块级文档）
+        let mut keys: Vec<&String> = data.keys().collect();
+        keys.sort_unstable();
+        for key in keys {
+            out.push_str(&Self::render_entry(key, &data[key])?);
         }
         out.push_str("</xml>");
         Ok(out)
@@ -109,17 +119,17 @@ impl Packer for XmlPacker {
                     }
 
                     let name = element.name.clone();
-                    let value = element.finish();
+                    let value = element.finish(stack.is_empty());
                     match stack.last_mut() {
                         Some(parent) => parent.insert_child(name, value),
-                        // 根元素完成：其值即 unpack 结果（根元素仅含直接文本时为
-                        // Value::String，此边角 PHP 实际产出 {"0": ...}，有意不复刻）
+                        // 根元素完成：其值即 unpack 结果（PHP 根恒为对象，单文本根
+                        // 的 {"0": "foo"} 怪癖有意不复刻，见 XmlElement::finish）
                         None => root_value = Some(value),
                     }
                 }
                 Event::Empty(bs) => {
                     // 自闭合元素 → 该 key 值为空 Object（对齐 PHP SimpleXML→json 怪癖）
-                    // 有意差异：属性被丢弃（PHP 会产出 "@attributes" 键）
+                    // 有意差异：属性被丢弃（PHP 8.5 对对象形态节点产出 "@attributes" 键）
                     let name = qname_to_string(bs.name());
                     if let Some(parent) = stack.last_mut() {
                         parent.insert_child(name, Value::Object(Map::new()));
@@ -133,7 +143,7 @@ impl Packer for XmlPacker {
                 Event::Text(t) => {
                     let text = t.decode().map_err(to_deserialize_error)?.into_owned();
                     match stack.last_mut() {
-                        Some(element) => element.text.push_str(&text),
+                        Some(element) => element.append_text(&text),
                         // 根级文本：空白忽略（对齐 PHP 对缩进/换行的容错），
                         // 非空白为非法 XML（如 "not-xml"，PHP 侧 wrapXml 抛
                         // InvalidArgumentException）
@@ -149,7 +159,7 @@ impl Packer for XmlPacker {
                 Event::CData(c) => {
                     let text = c.decode().map_err(to_deserialize_error)?.into_owned();
                     if let Some(element) = stack.last_mut() {
-                        element.text.push_str(&text);
+                        element.append_text(&text);
                     } else if !text.trim().is_empty() {
                         return Err(deserialize_error(
                             "text content outside of root element",
@@ -162,7 +172,7 @@ impl Packer for XmlPacker {
                     // 解析语义——quick-xml 只给出引用名，解引用由本侧完成）
                     let decoded = resolve_general_ref(&g)?;
                     match stack.last_mut() {
-                        Some(element) => element.text.push_str(&decoded),
+                        Some(element) => element.append_text(&decoded),
                         None if !decoded.trim().is_empty() => {
                             return Err(deserialize_error(
                                 "entity reference outside of root element",
@@ -233,9 +243,11 @@ impl XmlPacker {
     ///
     /// 字符串近似判定：i64/u64/f64 解析成功即视为数值（覆盖 "29"/"1.5"/"1e5"）。
     ///
-    /// 已知有意差异：
-    /// - 空白：PHP 8 `is_numeric` 允许尾随空白（前导空白 PHP 8.0 起不允许），
+    /// 已知有意差异（PHP `is_numeric` 为版本间移动靶，以下 PHP 行为
+    /// 实测于 8.5.10）：
+    /// - 空白：PHP 8.5 前导/尾随空白均为 true（8.0~8.4 前导空白为 false），
     ///   此处一律不允许；
+    /// - `".5"`：PHP true，Rust f64 解析失败为 false；
     /// - `"inf"`/`"NaN"`：Rust f64 解析成功为 true，PHP 为 false；
     /// - 整值浮点：serde_json `29.0` 序列化为 `"29.0"`，而 PHP `(float)29.0` 为
     ///   `"29"`（precision 截断）。
@@ -254,7 +266,10 @@ impl XmlPacker {
 struct XmlElement {
     name: String,
     text: String,
-    children: Vec<(String, Value)>,
+    /// 首个直接内容节点为文本时的空白判定（`None` = 首个内容不是文本）；
+    /// 决定 `finish` 是否走"字符串拼接"分支（复刻 PHP `_get_base_node_value`）
+    first_text_blank: Option<bool>,
+    children: BTreeMap<String, Value>,
 }
 
 impl XmlElement {
@@ -262,44 +277,81 @@ impl XmlElement {
         Self {
             name,
             text: String::new(),
-            children: Vec::new(),
+            first_text_blank: None,
+            children: BTreeMap::new(),
         }
+    }
+
+    /// 记录直接文本内容；首个直接内容节点为文本时缓存其空白判定
+    ///
+    /// 空文本不产生内容节点（libxml 空 CDATA 不构成文本节点，无首个文本）
+    fn append_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.children.is_empty() && self.first_text_blank.is_none() {
+            self.first_text_blank = Some(is_blank_text(text));
+        }
+        self.text.push_str(text);
     }
 
     /// 挂载子节点；同名兄弟元素第二次出现 → 该 key 转为
     /// [`Value::Array`] 追加（对齐 PHP SimpleXML → json_encode）
     fn insert_child(&mut self, name: String, value: Value) {
-        if let Some(existing) = self.children.iter_mut().find(|(k, _)| *k == name) {
-            match &mut existing.1 {
+        use std::collections::btree_map::Entry;
+
+        match self.children.entry(name) {
+            Entry::Occupied(mut entry) => match entry.get_mut() {
                 Value::Array(arr) => arr.push(value),
                 slot => {
                     let prev = std::mem::take(slot);
                     *slot = Value::Array(vec![prev, value]);
                 }
+            },
+            Entry::Vacant(entry) => {
+                entry.insert(value);
             }
-        } else {
-            self.children.push((name, value));
         }
     }
 
-    /// 元素结束 → 构建 [`Value`]：
-    /// - 有子元素 → [`Value::Object`]（混合内容：直接文本被丢弃，对齐 PHP）；
-    /// - 仅直接文本 → [`Value::String`]（叶子文本保真复刻，PHP 全程无数字转换）；
-    /// - 无文本无子元素（含自闭合）→ 空 [`Value::Object`]（对齐 PHP SimpleXML→json 怪癖）。
-    fn finish(self) -> Value {
-        if !self.children.is_empty() {
-            let mut map = Map::new();
-            for (key, value) in self.children {
-                // insert_child 已保证 children 中无同名键（第二次出现已转 Array）
-                map.insert(key, value);
-            }
-            Value::Object(map)
-        } else if !self.text.is_empty() {
-            Value::String(self.text)
-        } else {
-            Value::Object(Map::new())
+    /// 元素结束 → 构建 [`Value`]（复刻 PHP `sxe_get_prop_hash` / `_get_base_node_value`）
+    ///
+    /// - 根元素（`is_root = true`）：PHP 根恒为 JSON 对象（根直接文本丢弃，
+    ///   实测 `<xml>foo<a>1</a></xml>` → `{"a":"1"}`）；有子元素 → Object，
+    ///   仅有文本 → String（单文本根的 PHP `{"0": "foo"}` 怪癖有意不复刻），
+    ///   否则空 Object
+    /// - 非根元素：首个直接内容为文本且**非全空白** → String（全部直接文本拼接、
+    ///   子元素丢弃，实测 `<a>1<b>2</b>3</a>` → `"13"`）；否则有子元素 →
+    ///   Object（混合内容的直接文本丢弃，实测 `<a> <b>x</b> </a>` →
+    ///   `{"b":"x"}`）；否则空 Object
+    fn finish(self, is_root: bool) -> Value {
+        if is_root {
+            return if self.children.is_empty() {
+                if self.text.is_empty() {
+                    Value::Object(Map::new())
+                } else {
+                    Value::String(self.text)
+                }
+            } else {
+                Value::Object(self.children.into_iter().collect())
+            };
         }
+
+        if self.first_text_blank == Some(false) {
+            return Value::String(self.text);
+        }
+
+        if !self.children.is_empty() {
+            return Value::Object(self.children.into_iter().collect());
+        }
+
+        Value::Object(Map::new())
     }
+}
+
+/// libxml `xmlIsBlankNode` 语义：非空且全部为空白字符（space/tab/CR/LF）
+fn is_blank_text(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n'))
 }
 
 /// XML 元素名（QName）转 String
@@ -312,6 +364,8 @@ fn qname_to_string(name: QName<'_>) -> String {
 /// 对齐 PHP simplexml 的实体解析语义（libxml）：
 /// - 五个 XML 预定义实体（`amp`/`lt`/`gt`/`quot`/`apos`）→ 对应字符
 /// - `#N`（十进制）与 `#xH`/`#XH`（十六进制）数字字符引用 → 对应 Unicode 字符
+///   （限定 XML 1.0 合法字符集，对齐 libxml `xmlParseCharRef`：`&#0;`、`&#x8;`、
+///   `&#xFFFE;` 等非法字符引用报 "invalid xmlChar value"，实测 PHP 8.5 报错）
 /// - 其余（未在 DTD 声明的实体名、非法码点）→ 错误
 ///   （PHP 侧 libxml 报 "Entity not defined"，simplexml_load_string 返回 false，
 ///   wrapXml 抛 InvalidArgumentException；此处返回 [`ArtfulError::XmlDeserializeError`]）
@@ -336,11 +390,24 @@ fn resolve_general_ref(g: &quick_xml::events::BytesRef<'_>) -> Result<String> {
                 Some(hex) => u32::from_str_radix(hex, 16).map_err(|_| invalid())?,
                 None => digits.parse::<u32>().map_err(|_| invalid())?,
             };
-            char::from_u32(code).ok_or_else(invalid)?.to_string()
+            // XML 1.0 Char 集合过滤（对齐 libxml：非法字符引用报 invalid xmlChar value）
+            char::from_u32(code)
+                .filter(|&c| is_xml_char(c))
+                .ok_or_else(invalid)?
+                .to_string()
         }
     };
 
     Ok(resolved)
+}
+
+/// XML 1.0 合法字符集（`spec`: `Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] |
+/// [#xE000-#xFFFD] | [#x10000-#x10FFFF]`）
+fn is_xml_char(c: char) -> bool {
+    matches!(c, '\u{9}' | '\u{A}' | '\u{D}')
+        || ('\u{20}'..='\u{D7FF}').contains(&c)
+        || ('\u{E000}'..='\u{FFFD}').contains(&c)
+        || ('\u{10000}'..='\u{10FFFF}').contains(&c)
 }
 
 /// quick-xml 错误 → XmlDeserializeError
@@ -376,11 +443,11 @@ mod tests {
         ]);
 
         let result = packer.pack(&data, &HashMap::new()).unwrap();
-        // HashMap 无序：仅断言首尾标签与各项子串，顺序无关
-        assert!(result.starts_with("<xml>"));
-        assert!(result.ends_with("</xml>"));
-        assert!(result.contains("<name><![CDATA[yansongda]]></name>"));
-        assert!(result.contains("<age>29</age>"));
+        // 顶层键升序排序后输出（确定性）：age < name
+        assert_eq!(
+            result,
+            "<xml><age>29</age><name><![CDATA[yansongda]]></name></xml>"
+        );
     }
 
     #[test]
@@ -501,11 +568,41 @@ mod tests {
     fn test_xml_packer_unpack_mixed_content() {
         let packer = XmlPacker;
 
-        // 混合内容：元素同时含直接文本与子元素时丢弃直接文本（对齐 PHP）
+        // 复刻 PHP `_get_base_node_value`（下述全部实测 PHP 8.5）：
+        // 首直接内容为文本且非空白 → 全部直接文本拼接、子元素丢弃
+        let result = packer
+            .unpack("<xml><a>1<b>2</b>3</a></xml>", &HashMap::new())
+            .unwrap();
+        assert_eq!(result["a"], json!("13"));
+
         let result = packer
             .unpack("<xml><a>text<b>sub</b></a></xml>", &HashMap::new())
             .unwrap();
-        assert_eq!(result["a"], json!({"b": "sub"}));
+        assert_eq!(result["a"], json!("text"));
+
+        // 首直接内容为空白文本 → 对象分支：直接文本全部丢弃
+        let result = packer
+            .unpack("<xml><a> <b>x</b> </a></xml>", &HashMap::new())
+            .unwrap();
+        assert_eq!(result["a"], json!({"b": "x"}));
+
+        // 首直接内容是子元素 → 对象分支（尾部文本丢弃）
+        let result = packer
+            .unpack("<xml><a><b>1</b>tail</a></xml>", &HashMap::new())
+            .unwrap();
+        assert_eq!(result["a"], json!({"b": "1"}));
+    }
+
+    #[test]
+    fn test_xml_packer_unpack_root_mixed_content() {
+        let packer = XmlPacker;
+
+        // PHP 根恒为对象：根直接文本丢弃、子元素保留
+        // （实测 wrapXml('<xml>foo<a>1</a></xml>') → {'a': '1'}）
+        let result = packer
+            .unpack("<xml>foo<a>1</a></xml>", &HashMap::new())
+            .unwrap();
+        assert_eq!(result, json!({"a": "1"}));
     }
 
     #[test]
@@ -568,11 +665,16 @@ mod tests {
     fn test_xml_packer_unpack_rejects_invalid_char_ref() {
         let packer = XmlPacker;
 
-        // 非法数字引用：超码点范围 / 空数字 / 非数字 → XmlDeserializeError
+        // 非法数字引用：超码点范围 / 空数字 / 非数字 / XML 1.0 非法字符
+        // （&#0;/&#x8;/&#xFFFE; 实测 libxml 报 "invalid xmlChar value"）
+        // → XmlDeserializeError
         for input in [
             "<xml><a>&#x110000;</a></xml>",
             "<xml><a>&#;</a></xml>",
             "<xml><a>&#xZZ;</a></xml>",
+            "<xml><a>&#0;</a></xml>",
+            "<xml><a>&#x8;</a></xml>",
+            "<xml><a>&#xFFFE;</a></xml>",
         ] {
             assert!(
                 matches!(

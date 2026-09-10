@@ -13,7 +13,8 @@
 //!    请求体（`application/xml`），同样从 httpbin.org/post 回显中确认请求体。
 //! 3. `XmlPacker` + 默认 Json 方向：httpbin.org/xml 返回 XML，链尾 `ParserPlugin`
 //!    经 rocket.packer 解析为 `Destination::Json`（根元素值即结果、叶子文本为
-//!    字符串、同名兄弟元素转数组、混合内容丢弃直接文本）。
+//!    字符串、同名兄弟元素转数组、单元素取值对齐 PHP `_get_base_node_value`：
+//!    首直接文本非空白 → 拼接全部直接文本、子元素丢弃）。
 //!
 //! 目标端点沿用 basic.rs 的做法：向公共示例服务 httpbin.org 发起真实请求
 //! （examples 不新增依赖、不引入 wiremock 以保持自包含）；外部网络不可用时
