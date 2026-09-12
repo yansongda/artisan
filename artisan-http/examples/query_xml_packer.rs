@@ -3,8 +3,8 @@
 //! 演示在链上替换 `rocket.packer`（0.17.0 起链尾 `ParserPlugin` 经它 pack
 //! 请求体、unpack 响应体）的三种组合：
 //!
-//! 1. `QueryPacker` + Response 方向：payload 按 RFC1738（`http_build_query`
-//!    语义）编码为 `application/x-www-form-urlencoded` 表单体。因 httpbin.org/post
+//! 1. `QueryPacker` + Response 方向：payload 按 RFC1738 语义编码为
+//!    `application/x-www-form-urlencoded` 表单体。因 httpbin.org/post
 //!    的响应是 JSON（与 QueryPacker 的解析语义不匹配），解析方向用 Response
 //!    取原始响应，并从服务端回显中打印收到的表单体。真实场景（如银联证书
 //!    网关）响应即 query 串，可配合 payload 中的 `_unpack_raw` 参数逐字符
@@ -13,8 +13,8 @@
 //!    请求体（`application/xml`），同样从 httpbin.org/post 回显中确认请求体。
 //! 3. `XmlPacker` + 默认 Json 方向：httpbin.org/xml 返回 XML，链尾 `ParserPlugin`
 //!    经 rocket.packer 解析为 `Destination::Json`（根元素值即结果、叶子文本为
-//!    字符串、同名兄弟元素转数组、单元素取值对齐 PHP `_get_base_node_value`：
-//!    首直接文本非空白 → 拼接全部直接文本、子元素丢弃）。
+//!    字符串、同名兄弟元素转数组、单元素取值：首直接文本非空白 →
+//!    拼接全部直接文本、子元素丢弃）。
 //!
 //! 目标端点沿用 basic.rs 的做法：向公共示例服务 httpbin.org 发起真实请求
 //! （examples 不新增依赖、不引入 wiremock 以保持自包含）；外部网络不可用时

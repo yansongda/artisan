@@ -1,6 +1,6 @@
 //! 后置响应解析插件
 //!
-//! 对齐 artful PHP 的 `ParserPlugin`：在洋葱链后向阶段把响应解析为
+//! 在洋葱链后向阶段把响应解析为
 //! [`Destination`](crate::direction::Destination)。
 //!
 //! # 执行时机
@@ -20,23 +20,19 @@
 //! # params 传递语义
 //!
 //! 解析方向内部把 `rocket.payload` 全量作为 params 传给 packer 的
-//! [`unpack`](crate::packer::Packer::unpack)（不过滤 `_` 前缀特殊参数，
-//! 对齐 PHP `$payload?->all()`），因此 QueryPacker 的 `_unpack_raw` 等
-//! 特殊参数可经 payload 直接生效。
+//! [`unpack`](crate::packer::Packer::unpack)（不过滤 `_` 前缀特殊参数），
+//! 因此 QueryPacker 的 `_unpack_raw` 等特殊参数可经 payload 直接生效。
 //!
-//! # 与 PHP 的响应来源差异
+//! # 响应来源
 //!
-//! PHP 版读取 `destination`（ignite 同时写 destination/destinationOrigin），
-//! Rust 版读取 `destination_origin`。正常链路二者等价；但用户在前向插件中
-//! 预置 `Some(Destination::Response)` 时语义不同：PHP 会解析该预置响应，
-//! Rust 则解析 `destination_origin`（预置值仅用于守卫放行）。
+//! 解析读取的是 `destination_origin`（`IgniteCore` 写入的原始响应）；
+//! 用户在前向插件中预置的 `destination` 值不参与解析（仅用于守卫校验）。
 //!
 //! # 守卫
 //!
-//! `rocket.destination` 只能是 `None` 或
-//! [`Destination::Response`](crate::direction::Destination)（对齐 PHP
-//! `InvalidParamsException` 9208：解析插件中 destination 只能是 null 或
-//! `ResponseInterface`）；否则返回 [`ArtfulError::InvalidParameter`]。
+//! 进入解析前 `rocket.destination` 只能是 `None` 或
+//! [`Destination::Response`](crate::direction::Destination)，否则返回
+//! [`ArtfulError::InvalidParameter`]。
 
 use async_trait::async_trait;
 
@@ -61,9 +57,14 @@ impl Plugin for ParserPlugin {
         // 后置插件：前向直接穿透，HTTP 完成后在后向阶段解析
         next.call(rocket).await?;
 
-        // 分发解析方向（0.16.0 曾内联于 IgniteCore Ok 分支，0.17.0 起由本插件承担）
-        // 守卫：destination 只能是 None 或 Response（对齐 PHP 9208）。
-        // 穷举 match：枚举新增变体时此处编译失败，强制重新评估合法性，避免静默漏拦
+        // 守卫：进入解析前校验 destination 既有状态。合法值：
+        // - None：常规初始状态
+        // - Some(Response)：前向插件预置的原始响应（本插件解析的是
+        //   destination_origin，预置值不参与解析）
+        // - Some(Destination::None)：NoRequest 链路内层方向已写入
+        // Some(Json) 意味着结构化结果已经存在，属于链路配置错误
+        // （如双重挂载 ParserPlugin），报 InvalidParameter。
+        // 穷举 match：Destination 新增变体时此处编译失败，强制重新评估放行集合
         match &rocket.destination {
             Some(Destination::Json(_)) => {
                 return Err(ArtfulError::InvalidParameter {
@@ -72,11 +73,6 @@ impl Plugin for ParserPlugin {
                         .to_string(),
                 });
             }
-            // Some(Destination::None) 放行：NoRequest 链路的 NoHttpRequestDirection
-            // 会写入该值。注：“双 ParserPlugin 链不误杀”仅对 NoRequest 方向成立——
-            // Json 方向内层先写 Some(Json)，外层守卫将报 InvalidParameter（恰作为
-            // 配置错误的检测）；Response 方向内层已消费 destination_origin，外层报
-            // MissingResponse。多数方向下双挂载必然报错。
             None | Some(Destination::Response(_)) | Some(Destination::None) => {}
         }
 
@@ -136,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_non_response_destination() {
-        // 守卫:destination 预置为 Json(非 None/Response)→ InvalidParameter(对齐 PHP 9208)
+        // 守卫:destination 预置为 Json(非 None/Response)→ InvalidParameter
         let mut rocket = Rocket::new(HashMap::new());
         rocket.destination = Some(Destination::Json(json!({"x": 1})));
 

@@ -6,15 +6,12 @@
 //!
 //! - 使用 `rocket.client` 与 config.method、config.url
 //! - 添加 config.headers
-//! - 设置请求体（config.body 或 payload）
-//! - body 未设置且 payload 非空时走 fallback 打包：请求头缺失 `Content-Type`
-//!   时按 packer 声明的 [`crate::packer::Packer::content_type`] 直接补到 request_builder
-//!   （该分支位于 headers 遍历之后，写回 `config.headers` 不会再生效）
+//! - 设置请求体（仅 `config.body`；payload 的序列化由
+//!   [`AddPayloadBodyPlugin`](crate::plugins::AddPayloadBodyPlugin) 负责）
 //! - 应用 config.http.timeout
 //! - 结果存入 rocket.radar
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::Rocket;
@@ -42,19 +39,6 @@ impl Plugin for AddRadarPlugin {
 
         if let Some(body) = &rocket.config.body {
             request_builder = request_builder.body(body.clone());
-        } else if !rocket.payload.is_empty() {
-            // 对齐 PHP filter_params：剔除 `_` 前缀控制参数与 null 值后再序列化（同 AddPayloadBodyPlugin）
-            let filtered = crate::plugins::filter_params(&rocket.payload);
-            let body = rocket.packer.pack(&filtered, &HashMap::new())?;
-
-            // 判重按头名不区分大小写（该分支位于 headers 遍历之后，直接补到 request_builder）
-            if !rocket.has_header("Content-Type") {
-                if let Some(ct) = rocket.packer.content_type() {
-                    request_builder = request_builder.header("Content-Type", ct);
-                }
-            }
-
-            request_builder = request_builder.body(body);
         }
 
         if let Some(timeout) = rocket.config.http.timeout {
@@ -74,7 +58,6 @@ impl Plugin for AddRadarPlugin {
 mod tests {
     use super::*;
     use crate::flow_ctrl::FlowCtrl;
-    use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -109,49 +92,6 @@ mod tests {
             Some(&b"preset body"[..])
         );
         assert_eq!(request.timeout(), Some(&Duration::from_secs(7)));
-    }
-
-    #[tokio::test]
-    async fn fallback_packs_payload_with_content_type() {
-        // body 未设置且 payload 非空:fallback 打包并补 CT 到 request_builder
-        let mut rocket = Rocket::new(HashMap::new());
-        rocket.set_url("http://example.com/anything");
-        rocket.payload.insert("order_id".to_string(), json!("123"));
-
-        drive(&mut rocket).await.unwrap();
-
-        let request = rocket.radar.take().expect("radar should be built");
-        let body = request.body().and_then(|b| b.as_bytes()).expect("body");
-        let value: serde_json::Value = serde_json::from_slice(body).unwrap();
-        assert_eq!(value["order_id"], "123");
-        assert_eq!(
-            request
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok()),
-            Some("application/json")
-        );
-    }
-
-    #[tokio::test]
-    async fn fallback_respects_existing_content_type() {
-        // 用户已显式设置 CT(小写):fallback 不应再补,最终只有一个 CT 头
-        let mut rocket = Rocket::new(HashMap::new());
-        rocket.set_url("http://example.com/anything");
-        rocket.payload.insert("order_id".to_string(), json!("123"));
-        rocket.add_header("content-type", "application/custom");
-
-        drive(&mut rocket).await.unwrap();
-
-        let request = rocket.radar.take().expect("radar should be built");
-        assert_eq!(request.headers().get_all("content-type").iter().count(), 1);
-        assert_eq!(
-            request
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok()),
-            Some("application/custom")
-        );
     }
 
     #[tokio::test]

@@ -176,8 +176,7 @@ async fn chain_without_parser_plugin_returns_none_but_sends_request() {
 
 #[tokio::test]
 async fn parser_plugin_parses_json_response() {
-    // 对齐 PHP ArtfulTest::testDefaultDirection 语义：完整链（链尾 ParserPlugin）
-    // + JSON 响应 → Destination::Json 内容正确
+    // 完整链（链尾 ParserPlugin）+ JSON 响应 → Destination::Json 内容正确
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -247,7 +246,7 @@ async fn parser_plugin_unpacks_xml_via_replaced_packer() {
 // ============ 场景 4：QueryPacker 全链路（raw 模式证书无损） ============
 
 /// 自造 query 串（含 `\r\n`、`+`、`/`，多段验证 `&` 切分），
-/// 对齐 PHP QueryPackerTest::testUnpackRaw 的证书逐字符无损语义
+/// 验证 raw 模式下证书逐字符无损
 const QUERY_RAW_RESPONSE: &str = "accessType=0&signPubKeyCert=-----BEGIN CERTIFICATE-----\r\nMIIE+abc/xyz+AB==\r\n-----END CERTIFICATE-----&signature=c++EAuub/Rk==";
 
 #[tokio::test]
@@ -255,9 +254,8 @@ async fn query_packer_raw_mode_preserves_cert_characters() {
     // packer 替换为 QueryPacker：请求体按 RFC1738 打包（wiremock 断言）、
     // 响应为 query 串；payload 预置 `_unpack_raw: true` 走 raw 模式 →
     // 证书字段逐字符无损（`\r\n`、`+`、`/` 均不被解码破坏）。
-    // 另验证 filter_params 语义：`_unpack_raw` 作为控制参数不进入请求体
-    // （对齐 PHP AddPayloadBodyPlugin 的 filter_params，银联全字段验签下
-    // 多出的字段会导致验签失败）
+    // 另验证 filter_params：`_unpack_raw` 等控制参数不进入请求体
+    // （部分网关全字段验签，多出的字段会导致验签失败）
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -428,7 +426,7 @@ async fn custom_direction_dispatched_through_parser_plugin() {
 
 #[tokio::test]
 async fn parser_plugin_rejects_preset_json_destination() {
-    // 守卫（对齐 PHP InvalidParamsException 9208）：链上插件后向预置
+    // 守卫：链上插件后向预置
     // Some(Destination::Json(_)) → ParserPlugin 报 InvalidParameter
     let mock_server = MockServer::start().await;
 

@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- 透传 `artisan-http` 0.17.0 新增类型：`QueryPacker` / `XmlPacker`（内置 Packer）、`NoHttpRequestDirection` / `OriginResponseDirection`（内置 Direction）、`ParserPlugin`（后置响应解析插件）与 `XmlSerializeError` / `XmlDeserializeError` 错误变体，详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+- 透传 `artisan-http` 0.17.0 新增类型：`QueryPacker` / `XmlPacker`（内置 Packer）、`NoHttpRequestDirection` / `OriginResponseDirection`（内置 Direction）、`ParserPlugin`（后置响应解析插件）、`filter_params`（请求体打包前过滤控制参数的公共函数）与 `XmlSerializeError` / `XmlDeserializeError` 错误变体，详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
 
 ### Changed
 
-- **BREAKING**: 同步 `artisan-http` 0.17.0——响应解析由框架内置链尾核心动作 `IgniteCore` 移回插件链链尾 `ParserPlugin`（`IgniteCore` 仅执行 HTTP 请求，忘挂解析插件时请求照常发出但不解析）；`Packer::pack`/`unpack` 新增 `params` 形参（自定义 `Packer` 实现需补参适配）；`JsonDirection` 改经 `rocket.packer.unpack` 解包响应体（默认路径行为不变）；请求体打包前过滤 `_` 前缀控制参数与 `null` 值（对齐 PHP artful `filter_params`），迁移方式详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+- **BREAKING**: 同步 `artisan-http` 0.17.0——响应解析由框架内置链尾核心动作 `IgniteCore` 移回插件链链尾 `ParserPlugin`（`IgniteCore` 仅执行 HTTP 请求，忘挂解析插件时请求照常发出但不解析）；`Packer::pack`/`unpack` 新增 `params` 形参（自定义 `Packer` 实现需补参适配）；`JsonDirection` 改经 `rocket.packer.unpack` 解包响应体（默认路径行为不变）；请求体打包前过滤 `_` 前缀控制参数与 `null` 值；`AddRadarPlugin` 不再对未序列化的 payload 做 fallback 打包（请求体序列化统一由 `AddPayloadBodyPlugin` 承担），迁移方式详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
 
 ## [0.16.0] - 2026-08-31
 

@@ -17,8 +17,7 @@ use crate::Result;
 pub trait Packer: Send + Sync + std::fmt::Debug {
     /// 序列化数据
     ///
-    /// `params` 携带调用方附加参数（如 `_unpack_raw`），实现方可忽略；
-    /// 对齐 PHP `PackerInterface::pack` 的 `$params` 形参。
+    /// `params` 携带调用方附加参数（如 `_unpack_raw`），实现方可忽略。
     ///
     /// # Errors
     ///
@@ -31,8 +30,7 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
 
     /// 反序列化数据
     ///
-    /// `params` 携带调用方附加参数（如 `_unpack_raw`），实现方可忽略；
-    /// 对齐 PHP `PackerInterface::unpack` 的 `$params` 形参。
+    /// `params` 携带调用方附加参数（如 `_unpack_raw`），实现方可忽略。
     ///
     /// # Errors
     ///

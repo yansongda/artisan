@@ -1,8 +1,7 @@
 //! 不解析方向
 //!
-//! 对齐 artful PHP 的 `NoHttpRequestDirection`：不做任何解析，原样透传
-//! `rocket.destination` 的现有值（无值时为 [`Destination::None`]），与 PHP 版本
-//! "直接返回原响应、null 透传 null"的语义一致。
+//! 不做任何解析，原样透传 `rocket.destination` 的现有值
+//! （无值时为 [`Destination::None`]）。
 //!
 //! 说明：因 [`Destination::Response`]（内含 reqwest::Response 流式 body）
 //! 不可克隆，现有值经 `take` 取走；在 `ignite` 流程中取走的结果随即被
@@ -54,7 +53,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_none_when_destination_absent() {
-        // destination 为 None：返回 Destination::None（对齐 PHP null 透传 null）
+        // destination 为 None：返回 Destination::None
         let mut rocket = Rocket::new(HashMap::new());
 
         let result = NoHttpRequestDirection.parse(&mut rocket).await.unwrap();

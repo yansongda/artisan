@@ -10,16 +10,15 @@ use crate::error::ArtfulError;
 
 /// JSON 解析方向
 ///
-/// 实际行为是"用 [`Rocket::packer`] 解包响应体"（对齐 PHP `CollectionDirection::guide()`）。
+/// 实际行为是"用 [`Rocket::packer`] 解包响应体"。
 /// 默认 packer 为 [`JsonPacker`](crate::packers::JsonPacker) 时即 JSON 解析；
 /// 设置 [`XmlPacker`](crate::packers::XmlPacker) 后响应按 XML 解包。
 ///
 /// # 响应体编码
 ///
 /// 响应体经 [`reqwest::Response::text`] 以 UTF-8 读取（响应声明了 charset 时按
-/// 声明解码），非 UTF-8 报文报 [`ArtfulError::RequestFailed`]；PHP 侧
-/// `(string)$response->getBody()` 无编码限制。属已声明差异（当前主流网关均为
-/// UTF-8，影响限于 GBK 等历史编码报文）。
+/// 声明解码），非 UTF-8 报文报 [`ArtfulError::RequestFailed`]。影响限于 GBK
+/// 等非 UTF-8 历史编码报文。
 #[derive(Debug, Clone)]
 pub struct JsonDirection;
 
@@ -28,7 +27,7 @@ impl Direction for JsonDirection {
     /// 将 HTTP 响应解析为 JSON
     ///
     /// 读取响应体文本后交由 `rocket.packer` 解包（params 传 `rocket.payload` 全量，
-    /// 不过滤 `_` 特殊参数——对齐 PHP `$payload?->all()`），结果包装为
+    /// 不过滤 `_` 特殊参数——`_unpack_raw` 等控制参数对解包行为生效），结果包装为
     /// [`Destination::Json`]。
     ///
     /// # Errors

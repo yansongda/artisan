@@ -244,36 +244,6 @@ async fn custom_packer_content_type() {
     assert_eq!(expect_json(result)["ok"], true);
 }
 
-#[tokio::test]
-async fn fallback_branch_sets_content_type() {
-    let mock_server = MockServer::start().await;
-
-    // 链中不含 AddPayloadBodyPlugin：AddRadarPlugin fallback 打包分支应补 Content-Type
-    Mock::given(method("POST"))
-        .and(path("/ct-fallback"))
-        .and(header("content-type", "application/json"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
-        .mount(&mock_server)
-        .await;
-
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
-
-    let plugins: Vec<Arc<dyn Plugin>> = vec![
-        Arc::new(StartPlugin),
-        Arc::new(MethodUrlPlugin {
-            method: reqwest::Method::POST,
-            url: mock_server.uri() + "/ct-fallback",
-        }),
-        Arc::new(AddRadarPlugin),
-        Arc::new(ParserPlugin),
-    ];
-
-    let artful = Artful::new().unwrap();
-    let result = artful.artful(params, plugins).await.unwrap();
-
-    assert_eq!(expect_json(result)["ok"], true);
-}
-
 // ============ client 级配置生效测试 ============
 
 #[tokio::test]

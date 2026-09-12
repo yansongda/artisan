@@ -28,9 +28,9 @@ impl Plugin for AddPayloadBodyPlugin {
 
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
-            // 对齐 PHP filter_params：剔除 `_` 前缀控制参数与 null 值后再序列化，
-            // 避免 `_unpack_raw` 等内部参数进入发往网关的请求体（银联等对全字段验签）
-            let filtered = crate::plugins::filter_params(&rocket.payload);
+            // 剔除 `_` 前缀控制参数与 null 值后再序列化，避免 `_unpack_raw` 等
+            // 内部参数进入发往网关的请求体（部分网关对全字段验签）
+            let filtered = crate::filter_params(&rocket.payload);
             rocket.config.body = Some(rocket.packer.pack(&filtered, &HashMap::new())?);
 
             // 判重按头名不区分大小写，用户以任意大小写键显式设置的值都不覆盖
@@ -104,8 +104,8 @@ mod tests {
 
     #[tokio::test]
     async fn filters_underscore_keys_and_nulls_from_body() {
-        // 对齐 PHP filter_params：`_` 前缀控制参数与 null 值不进入请求体
-        // （如银联 `_unpack_raw` 只影响本侧解包，不能随报文发给网关）
+        // `filter_params` 剔除 `_` 前缀控制参数与 null 值：
+        // 如 `_unpack_raw` 只影响本侧解包，不能随报文发给网关
         let params = HashMap::from([
             ("_unpack_raw".to_string(), json!(true)),
             ("_secret".to_string(), json!("x")),

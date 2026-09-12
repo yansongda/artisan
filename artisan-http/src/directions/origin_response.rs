@@ -1,9 +1,7 @@
 //! 原始响应方向
 //!
-//! 对齐 artful PHP 的 `OriginResponseDirection`：不做任何解析，直接将原始
-//! HTTP 响应以 [`Destination::Response`] 返回；无原始响应时返回
-//! [`ArtfulError::MissingResponse`]（对齐 PHP 抛出 `InvalidResponseException`
-//! 9303 的行为）。
+//! 不做任何解析，直接将原始 HTTP 响应以 [`Destination::Response`] 返回；
+//! 无原始响应时返回 [`ArtfulError::MissingResponse`]。
 
 use async_trait::async_trait;
 
@@ -61,7 +59,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_response_when_origin_absent() {
-        // origin 缺失：返回 MissingResponse（对齐 PHP 抛 9303）
+        // origin 缺失：返回 MissingResponse
         let mut rocket = Rocket::new(HashMap::new());
 
         let result = OriginResponseDirection.parse(&mut rocket).await;

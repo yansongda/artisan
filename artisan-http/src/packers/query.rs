@@ -1,50 +1,43 @@
 //! Query 序列化器实现
 //!
-//! 实现 [`Packer`] trait，按 PHP `http_build_query`（`PHP_QUERY_RFC1738`）/
-//! `parse_str` 语义编解码 `application/x-www-form-urlencoded` 表单数据，
-//! 对齐 [yansongda/artful](https://github.com/yansongda/artful) 的
-//! `QueryPacker`（`Collection::query()` / `Arr::wrapQuery()`）。
+//! 实现 [`Packer`] trait，编解码 `application/x-www-form-urlencoded`
+//! 表单数据（RFC1738 语义）。
 //!
 //! # pack 编码语义（RFC1738）
 //!
 //! - 保留字符仅 `A-Za-z0-9-_.`；空格转 `+`；其余字节转 `%XX`（大写十六进制）；键与值均编码
-//! - `String` 原文编码；`Number` 转数字字符串；`Bool(true)` → `"1"`、`Bool(false)` →
-//!   `"0"`（PHP http_build_query 的 IS_TRUE/IS_FALSE 专用分支，非 `(string)` 强转，
-//!   实测 PHP 8.5：`http_build_query(['t'=>true,'f'=>false])` → `t=1&f=0`）；
-//!   `Null` 跳过整个键值对（PHP IS_NULL 分支 `continue`，实测不产出任何键值对）
-//! - `Array`/`Object` 递归展开为 `k[sub]` 语法（Object 用键名、Array 用下标 `a[0]`），
-//!   空容器跳过（不产出任何键值对）；递归深度不限，对齐 PHP
-//! - 多项以 `&` 连接为 `k=v`；顶层键先按字典序升序排序后输出（**确定性**；
-//!   有意差异：PHP 保持数组插入序，签名场景请复核拼接顺序）
+//! - `String` 原文编码；`Number` 转数字字符串；`Bool(true)` → `"1"`、
+//!   `Bool(false)` → `"0"`；`Null` 跳过整个键值对
+//! - `Array`/`Object` 递归展开为 `k[sub]` 语法（Object 用键名、Array 用
+//!   下标 `a[0]`），空容器跳过（不产出任何键值对）；递归深度不限
+//! - 多项以 `&` 连接为 `k=v`；顶层键先按字典序升序排序后输出
+//!   （**确定性**：HashMap 无序，排序保证签名场景可复现）
 //!
 //! # unpack 解析语义
 //!
-//! 默认模式对齐 PHP `parse_str`：
-//!
-//! - 按 `&` 切段（空段跳过），每段取首个 `=` 分出 key/value，无 `=` 段 value 为 `""`
+//! - 按 `&` 切段（空段跳过），每段取首个 `=` 分出 key/value，无 `=` 段
+//!   value 为 `""`
 //! - key/value 先 URL 解码（`+`→空格、`%XX`→字节，非法 `%` 序列原样保留字节）；
-//!   key 解码后按 PHP parse_str quirk 修饰**顶层**变量名：前导 `' '` 忽略、
-//!   `.` 与空格替换为 `_`，首个 `[` 之后的嵌套名原样保留（实测 PHP 8.5：
-//!   `k[su.b x]` 内层保持 `su.b x` 不变）；修饰后为空的键整段丢弃
-//!   （实测 `parse_str('=x')` 产出空数组）
+//!   key 解码后修饰**顶层**变量名：前导 `' '` 忽略、`.` 与空格替换为 `_`，
+//!   首个 `[` 之后的嵌套名原样保留；修饰后为空的键整段丢弃
 //! - 解析 `[...]` 后缀：`k[sub]` → 嵌套对象；`k[]` / `k[0]` 等纯数值下标 →
 //!   数组追加；嵌套解析支持一层，更深层级按一层语义近似
-//! - 所有值均为 `Value::String`（PHP `parse_str` 不做类型推断）
+//! - 所有值均为 `Value::String`（不做类型推断）
 //!
 //! raw 模式（`params` 中 `_unpack_raw` 为 truthy）不做任何解码：按 `&` 切段、
 //! 首个 `=` 分出 key/value 后原样保留为 `Value::String`。
 //!
 //! # raw 模式动机
 //!
-//! 银联等网关返回的报文中，`signPubKeyCert` 证书串包含 `\r\n`、`+`、`/`：
-//! 默认模式的 `+`→空格 与 `%XX` 解码会破坏证书原文，导致
-//! `openssl_pkey_get_public` 无法验签；raw 模式保证证书逐字符无损。
+//! 部分网关返回的报文中，`signPubKeyCert` 证书串包含 `\r\n`、`+`、`/`：
+//! 默认模式的 `+`→空格与 `%XX` 解码会破坏证书原文，导致无法验签；
+//! raw 模式保证证书逐字符无损。
 //!
 //! # `_unpack_raw` truthy 判定
 //!
-//! 对齐 PHP truthy / `!empty()`（含容器类型）：非空 `Array`/`Object` 为 truthy、
-//! 空容器为 falsy；`Bool(true)`、非 `0` 数字、非 `""` 且非 `"0"` 的字符串为
-//! truthy；`Bool(false)`、`Null`、`0` 数字、`"0"`/`""` 字符串为 falsy。
+//! 非空 `Array`/`Object` 为 truthy、空容器为 falsy；`Bool(true)`、非 `0`
+//! 数字、非 `""` 且非 `"0"` 的字符串为 truthy；`Bool(false)`、`Null`、
+//! `0` 数字、`"0"`/`""` 字符串为 falsy。
 
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -54,8 +47,7 @@ use crate::packer::Packer;
 
 /// Query 序列化器
 ///
-/// 按 PHP `http_build_query`（`PHP_QUERY_RFC1738`）/ `parse_str` 语义实现
-/// [`Packer`] trait，处理 `application/x-www-form-urlencoded` 表单数据。
+/// 处理 `application/x-www-form-urlencoded` 表单数据（RFC1738 语义）。
 /// 详见模块级文档。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryPacker;
@@ -74,7 +66,7 @@ impl Packer for QueryPacker {
         _params: &HashMap<String, Value>,
     ) -> Result<String> {
         let mut parts: Vec<String> = Vec::new();
-        // 顶层键升序排序后输出（确定性；PHP 保持数组插入序，见模块级文档）
+        // 顶层键升序排序后输出（HashMap 无序，排序保证确定性）
         let mut keys: Vec<&String> = data.keys().collect();
         keys.sort_unstable();
         for key in keys {
@@ -87,7 +79,7 @@ impl Packer for QueryPacker {
     /// 将表单字符串解析为 [`Value::Object`]
     ///
     /// `params` 中 `_unpack_raw` 为 truthy 时走 raw 模式（不解码），
-    /// 否则按 PHP `parse_str` 语义解析（含 `.`/空格 → `_` quirk 与 `[...]` 嵌套）。
+    /// 否则解析并 URL 解码（含 `.`/空格 → `_` 的键名修饰与 `[...]` 嵌套）。
     ///
     /// # Errors
     ///
@@ -108,10 +100,10 @@ impl Packer for QueryPacker {
     }
 }
 
-/// 递归编码一个键值对（对齐 PHP `http_build_query` 展开逻辑）
+/// 递归编码一个键值对
 ///
 /// `prefix` 为未编码的原始键路径（顶层为键名，嵌套为 `a[b]` / `a[0]` 形式）；
-/// 空 `Array`/`Object` 不产出任何键值对（对齐 PHP 跳过空容器）。
+/// 空 `Array`/`Object` 不产出任何键值对。
 fn pack_entry(prefix: &str, value: &Value, parts: &mut Vec<String>) {
     match value {
         Value::Array(items) => {
@@ -124,7 +116,7 @@ fn pack_entry(prefix: &str, value: &Value, parts: &mut Vec<String>) {
                 pack_entry(&format!("{prefix}[{key}]"), item, parts);
             }
         }
-        // PHP IS_NULL 分支 continue：跳过整个键值对（含嵌套容器内）
+        // null 跳过整个键值对（含嵌套容器内）
         Value::Null => {}
         scalar => parts.push(format!(
             "{}={}",
@@ -134,10 +126,10 @@ fn pack_entry(prefix: &str, value: &Value, parts: &mut Vec<String>) {
     }
 }
 
-/// 标量值的 PHP http_build_query 编码语义
+/// 标量值的编码语义
 ///
-/// `true` → `"1"`、`false` → `"0"`（IS_TRUE/IS_FALSE 专用分支，实测 PHP 8.5）、
-/// `Number` → 数字字符串；`Null` 不会到达此处（`pack_entry` 已跳过）；
+/// `true` → `"1"`、`false` → `"0"`、`Number` → 数字字符串；
+/// `Null` 不会到达此处（`pack_entry` 已跳过）；
 /// 容器也不会到达此处（`pack_entry` 中已递归展开，空容器不产出键值对）。
 fn scalar_to_string(value: &Value) -> String {
     match value {
@@ -175,7 +167,7 @@ fn percent_encode(s: &str) -> String {
 
 /// RFC1738 百分号解码：`+` 转空格、`%XX` 转对应字节；非法 `%` 序列按原样保留字节
 ///
-/// 返回字节序列，由调用方经 `String::from_utf8_lossy` 转为字符串（对齐 PHP 字节串语义）。
+/// 返回字节序列，由调用方经 `String::from_utf8_lossy` 转为字符串。
 fn percent_decode(s: &str) -> Vec<u8> {
     fn hex_val(byte: u8) -> Option<u8> {
         match byte {
@@ -215,14 +207,13 @@ fn percent_decode(s: &str) -> Vec<u8> {
     out
 }
 
-/// 默认模式：按 PHP `parse_str` 语义解析
+/// 默认模式：解析并 URL 解码
 ///
-/// - 按 `&` 切段，空段跳过（对齐 PHP 分段循环跳过空段）；每段取首个 `=` 分出
-///   key/value，无 `=` 段 value 为 `""`
-/// - key/value 先 URL 解码（`+`→空格、`%XX`→字节）；key 解码后按 PHP parse_str
-///   quirk 修饰顶层变量名（前导 `' '` 忽略、`.` 与空格替换为 `_`、首个 `[` 之后
-///   原样保留，见 [`mangle_key`]；实测 PHP 8.5 `k[su.b x]` 内层不修饰）；
-///   修饰后为空的键整段丢弃（实测 `parse_str('=x')` 产出空数组）
+/// - 按 `&` 切段，空段跳过；每段取首个 `=` 分出 key/value，无 `=` 段
+///   value 为 `""`
+/// - key/value 先 URL 解码（`+`→空格、`%XX`→字节）；key 解码后修饰顶层
+///   变量名（前导 `' '` 忽略、`.` 与空格替换为 `_`、首个 `[` 之后
+///   原样保留，见 [`mangle_key`]）；修饰后为空的键整段丢弃
 /// - 解析 `[...]` 后缀：`k[sub]` → 嵌套对象；`k[]` / `k[0]` 等纯数值下标 →
 ///   数组追加（忽略实际下标）；嵌套仅支持一层，更深层级按一层语义近似
 fn unpack_parse_str(data: &str) -> Value {
@@ -239,7 +230,7 @@ fn unpack_parse_str(data: &str) -> Value {
         };
 
         let key = mangle_key(&String::from_utf8_lossy(&percent_decode(raw_key)));
-        // 修饰后为空的键：丢弃整段（PHP 空变量名不注册，实测 parse_str('=x') → []）
+        // 修饰后为空的键：丢弃整段
         if key.is_empty() {
             continue;
         }
@@ -253,14 +244,11 @@ fn unpack_parse_str(data: &str) -> Value {
     Value::Object(root)
 }
 
-/// raw 模式：不做任何解码，逐段保留原文（对齐 PHP `Arr::wrapQuery($query, true)`）
+/// raw 模式：不做任何解码，逐段保留原文
 ///
 /// - 整串为空或不含 `=` 时返回空对象
-/// - 按 `&` 切段，每段取首个 `=`：有 `=` → key/value 原样保留；无 `=` 段（混合畸形报文）→
-///   **有意差异**：Rust 容错为 key `""`、value 去掉首字符（PHP 7 隐式转换期语义）；
-///   PHP 8 + supports `declare(strict_types=1)` 下该场景直接抛 `TypeError`
-///   （实测 PHP 8.5），请求整体失败。Rust 按字符边界切除首字符、PHP 按字节，
-///   多字节首字符场景存在差异
+/// - 按 `&` 切段，每段取首个 `=`：有 `=` → key/value 原样保留；无 `=` 段
+///   （混合畸形报文）→ 容错为 key `""`、value 去掉首字符（按字符边界切除）
 fn unpack_raw(data: &str) -> Value {
     let mut root = Map::new();
 
@@ -277,8 +265,7 @@ fn unpack_raw(data: &str) -> Value {
                 );
             }
             None => {
-                // 有意差异：函数文档；无 `=` 段容错为 key `""`、value 去掉第一个字符
-                // （PHP 8 + strict_types 下该场景抛 TypeError，见函数文档）
+                // 无 `=` 段容错为 key `""`、value 去掉第一个字符（见函数文档）
                 let value = match segment.chars().next() {
                     Some(first) => &segment[first.len_utf8()..],
                     None => "",
@@ -291,11 +278,11 @@ fn unpack_raw(data: &str) -> Value {
     Value::Object(root)
 }
 
-/// PHP parse_str 顶层变量名修饰 quirk（实测 PHP 8.5）
+/// 顶层变量名修饰
 ///
 /// - 前导 `' '` 忽略（仅空格，非其他空白）
 /// - 首 `[` 之前的顶层名中 `.` 与 `' '` 替换为 `_`
-/// - 首个 `[` 之后的嵌套名原样保留（实测 `k[su.b x]` → 内层 `su.b x` 不变）
+/// - 首个 `[` 之后的嵌套名原样保留（`k[su.b x]` → 内层 `su.b x` 不变）
 fn mangle_key(raw: &str) -> String {
     let trimmed = raw.trim_start_matches(' ');
     match trimmed.find('[') {
@@ -311,7 +298,7 @@ fn mangle_key(raw: &str) -> String {
 /// 解析 `[...]` 后缀并写入容器（一层近似）
 ///
 /// `k[sub]` → 嵌套对象键 `sub`；`k[]` / `k[0]` 等纯数值下标 → 数组追加
-/// （忽略实际下标，近似 PHP 数组追加语义）；无 `[...]` 后缀 → 顶层平键。
+/// （忽略实际下标，按追加语义处理）；无 `[...]` 后缀 → 顶层平键。
 fn insert_bracketed(root: &mut Map<String, Value>, key: &str, value: Value) {
     let Some((base, inner)) = split_bracket(key) else {
         root.insert(key.to_string(), value);
@@ -368,7 +355,7 @@ fn insert_into_object(root: &mut Map<String, Value>, base: &str, inner: &str, va
     }
 }
 
-/// PHP truthy / `!empty()` 语义判定（含容器类型）
+/// truthy 判定（含容器类型）
 ///
 /// truthy：`Bool(true)`、非 `0` 数字、非 `""` 且非 `"0"` 的字符串、非空
 /// `Array`/`Object`；falsy：`Bool(false)`、`Null`、`0` 数字、`"0"`/`""`
@@ -389,7 +376,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// 银联 testUnpackRaw 报文（自 PHP QueryPackerTest::testUnpackRaw 原样复制，含 \r\n、+、/）
+    /// raw 模式测试报文（含 \r\n、`+`、`/` 的网关响应样本）
     const UNPACK_RAW_FIXTURE: &str = concat!(
         "accessType=0&bizType=000000&encoding=utf-8&merId=777290058167151&orderId=refundpay20240105165842&origQryId=052401051658427862748&queryId=052401051658427863998&respCode=00&respMsg=成功[0000000]&signMethod=01&txnAmt=1&txnSubType=00&txnTime=20240105165842&txnType=04&version=5.1.0&signPubKeyCert=-----BEGIN CERTIFICATE-----\r\n",
         "MIIEYzCCA0ugAwIBAgIFEDkwhTQwDQYJKoZIhvcNAQEFBQAwWDELMAkGA1UEBhMC\r\n",
@@ -421,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_pack_basic() {
-        // 对齐 PHP QueryPackerTest::testPack（顶层键升序排序后输出，确定性）
+        // 顶层键升序排序后输出（确定性）
         let packer = QueryPacker;
         let data = HashMap::from([
             ("name".to_string(), json!("yansongda")),
@@ -455,8 +442,7 @@ mod tests {
 
     #[test]
     fn test_pack_bool_null() {
-        // 实测 PHP 8.5 http_build_query：true → "1"、false → "0"（IS_FALSE 专用分支
-        // 而非 (string) 强转的 ""）、null → 整键跳过（IS_NULL continue）
+        // true → "1"、false → "0"、null → 整键跳过
         let packer = QueryPacker;
         let data = HashMap::from([
             ("t".to_string(), json!(true)),
@@ -470,8 +456,7 @@ mod tests {
 
     #[test]
     fn test_pack_skips_null_in_nested_containers() {
-        // PHP 递归语义：嵌套容器中的 null 同样整键跳过；数组按下标枚举
-        // （实测 http_build_query(['a' => [null, 2]]) → a%5B1%5D=2）
+        // 嵌套容器中的 null 同样整键跳过；数组按下标枚举
         let packer = QueryPacker;
         let data = HashMap::from([("a".to_string(), json!([null, 2]))]);
 
@@ -480,8 +465,7 @@ mod tests {
 
     #[test]
     fn test_pack_nested_object() {
-        // 推断：本机无 PHP，未经实测（基于 PHP 手册 http_build_query 示例
-        // user%5Bname%5D=Bob+Smith 推导：`[`/`]` 编码为 %5B/%5D）
+        // 嵌套对象：键路径 `a[b]`（`[`/`]` 编码为 %5B/%5D）
         let packer = QueryPacker;
         let data = HashMap::from([("a".to_string(), json!({"b": 1}))]);
 
@@ -490,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_pack_nested_array_uses_index() {
-        // 推断：本机无 PHP，未经实测（基于 PHP http_build_query 数组下标语义推导）
+        // 嵌套数组：下标展开为 a[l][0]=2&a[l][1]=3
         let packer = QueryPacker;
         let data = HashMap::from([("a".to_string(), json!({"l": [2, 3]}))]);
 
@@ -500,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_pack_skips_empty_containers() {
-        // PHP http_build_query 跳过空数组/空对象（不产出任何键值对）
+        // 空数组/空对象不产出任何键值对
         let packer = QueryPacker;
         let data = HashMap::from([("a".to_string(), json!({})), ("b".to_string(), json!([]))]);
 
@@ -509,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_unpack_default() {
-        // 对齐 PHP QueryPackerTest::testUnpack（值保持字符串）
+        // 值保持字符串
         let packer = QueryPacker;
 
         let result = packer
@@ -520,8 +504,8 @@ mod tests {
 
     #[test]
     fn test_unpack_default_mangle_quirk() {
-        // PHP parse_str quirk（实测 PHP 8.5）：顶层变量名中 `.` 与空格 → `_`、
-        // 前导空格忽略；首个 `[` 之后的嵌套名原样保留；修饰后为空的键整段丢弃
+        // 顶层变量名中 `.` 与空格 → `_`、前导空格忽略；首个 `[` 之后的嵌套名
+        // 原样保留；修饰后为空的键整段丢弃
         let packer = QueryPacker;
 
         let result = packer.unpack("a.b=1&x y=2", &HashMap::new()).unwrap();
@@ -546,7 +530,7 @@ mod tests {
             json!({"a": "1"})
         );
 
-        // 全点键 mangle 为 __ 保留（实测 parse_str('..=1') → {'__': '1'}）
+        // 全点键修饰为 __ 保留（`..=1` → {"__": "1"}）
         assert_eq!(
             packer.unpack("..=1", &HashMap::new()).unwrap(),
             json!({"__": "1"})
@@ -592,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_unpack_raw_keeps_plus() {
-        // 对齐 PHP QueryPackerTest::testUnpackBlank（_unpack_raw=1，+ 不解码）
+        // _unpack_raw=1：+ 不解码
         let packer = QueryPacker;
         let params = HashMap::from([("_unpack_raw".to_string(), json!(true))]);
 
@@ -602,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_unpack_raw_cert_unmodified() {
-        // 对齐 PHP QueryPackerTest::testUnpackRaw：raw 解析后证书等字段逐字符无损
+        // raw 解析后证书等字段逐字符无损
         let packer = QueryPacker;
         let params = HashMap::from([("_unpack_raw".to_string(), json!(true))]);
 
@@ -643,8 +627,7 @@ mod tests {
 
     #[test]
     fn test_unpack_raw_segment_without_equals() {
-        // 推断：本机无 PHP，未经实测（基于 PHP substr($item, 0, false) → "" /
-        // substr($item, false + 1) → 去掉第一个字符 的强转语义推导）
+        // 无 `=` 段容错：key `""`、value 去掉第一个字符
         let packer = QueryPacker;
         let params = HashMap::from([("_unpack_raw".to_string(), json!(true))]);
 
@@ -654,8 +637,8 @@ mod tests {
 
     #[test]
     fn test_unpack_raw_truthy_matrix() {
-        // 对齐 PHP truthy / !empty()（含容器类型）：truthy 参数走 raw 模式
-        //（+ 保留），falsy 参数走默认模式（+ 转空格）
+        // truthy 判定矩阵：truthy 参数走 raw 模式（+ 保留），
+        // falsy 参数走默认模式（+ 转空格）
         let packer = QueryPacker;
         let cases = vec![
             (json!(true), true),
