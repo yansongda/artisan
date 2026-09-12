@@ -1,9 +1,9 @@
 //! Query 序列化器实现
 //!
 //! 实现 [`Packer`] trait，编解码 `application/x-www-form-urlencoded`
-//! 表单数据（RFC1738 语义）。
+//! 表单数据（WHATWG URL Standard 序列化语义）。
 //!
-//! # pack 编码语义（RFC1738）
+//! # pack 编码语义（application/x-www-form-urlencoded）
 //!
 //! - 保留字符仅 `A-Za-z0-9-_.`；空格转 `+`；其余字节转 `%XX`（大写十六进制）；键与值均编码
 //! - `String` 原文编码；`Number` 转数字字符串；`Bool(true)` → `"1"`、
@@ -47,13 +47,13 @@ use crate::packer::Packer;
 
 /// Query 序列化器
 ///
-/// 处理 `application/x-www-form-urlencoded` 表单数据（RFC1738 语义）。
+/// 处理 `application/x-www-form-urlencoded` 表单数据（WHATWG URL Standard 序列化语义）。
 /// 详见模块级文档。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryPacker;
 
 impl Packer for QueryPacker {
-    /// 将 HashMap 按 RFC1738 编码为表单字符串
+    /// 将 HashMap 编码为 `application/x-www-form-urlencoded` 表单字符串
     ///
     /// Query 序列化器忽略 params（pack 无附加开关）。
     ///
@@ -142,7 +142,7 @@ fn scalar_to_string(value: &Value) -> String {
     }
 }
 
-/// RFC1738（application/x-www-form-urlencoded）百分号编码
+/// `application/x-www-form-urlencoded` 百分号编码（WHATWG URL Standard 序列化）
 ///
 /// 保留字符仅 `A-Za-z0-9-_.`；空格转 `+`；其余字节转 `%XX`（大写十六进制）。
 fn percent_encode(s: &str) -> String {
@@ -165,7 +165,7 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-/// RFC1738 百分号解码：`+` 转空格、`%XX` 转对应字节；非法 `%` 序列按原样保留字节
+/// form-urlencoded 百分号解码：`+` 转空格、`%XX` 转对应字节；非法 `%` 序列按原样保留字节
 ///
 /// 返回字节序列，由调用方经 `String::from_utf8_lossy` 转为字符串。
 fn percent_decode(s: &str) -> Vec<u8> {

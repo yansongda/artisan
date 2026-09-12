@@ -333,7 +333,7 @@ pub enum DirectionKind {
 | Type | Kind | Purpose |
 |------|------|---------|
 | `JsonPacker` | Packer | JSON serialization (default) |
-| `QueryPacker` | Packer | RFC1738 form-urlencoded; `unpack` supports the raw mode via `_unpack_raw` |
+| `QueryPacker` | Packer | form-urlencoded (WHATWG URL Standard); `unpack` supports the raw mode via `_unpack_raw` |
 | `XmlPacker` | Packer | CDATA-format XML (quick-xml based); leaf text stays `String` |
 | `JsonDirection` | Direction | Parses via `rocket.packer.unpack` (default) |
 | `NoHttpRequestDirection` | Direction | `NoRequest`: no HTTP request is sent |

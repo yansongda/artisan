@@ -1301,7 +1301,7 @@ wiremock = { version = "~0.6.5" }
 ### v0.17.0 - 解析回归插件化 + Packer/Direction 家族扩展（2026-09-01）
 
 - [x] `ParserPlugin` 回归：响应解析由 `IgniteCore` 移回链尾插件（`IgniteCore` 仅 HTTP 执行，见 §4.4 / §4.5）
-- [x] `QueryPacker`（RFC1738 + `_unpack_raw` 原始模式）与 `XmlPacker`（CDATA 格式，quick-xml 0.41）
+- [x] `QueryPacker`（form-urlencoded + `_unpack_raw` 原始模式）与 `XmlPacker`（CDATA 格式，quick-xml 0.41）
 - [x] `NoHttpRequestDirection` / `OriginResponseDirection` 独立 Direction 实现
 - [x] `Packer::pack`/`unpack` 增加 `params` 形参；`JsonDirection` 改经 `rocket.packer.unpack` 解包
 - [x] XML Packer 支持（原 v0.3.0 规划项，提前落地）

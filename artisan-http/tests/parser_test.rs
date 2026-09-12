@@ -251,7 +251,7 @@ const QUERY_RAW_RESPONSE: &str = "accessType=0&signPubKeyCert=-----BEGIN CERTIFI
 
 #[tokio::test]
 async fn query_packer_raw_mode_preserves_cert_characters() {
-    // packer 替换为 QueryPacker：请求体按 RFC1738 打包（wiremock 断言）、
+    // packer 替换为 QueryPacker：请求体按 form-urlencoded 打包（wiremock 断言）、
     // 响应为 query 串；payload 预置 `_unpack_raw: true` 走 raw 模式 →
     // 证书字段逐字符无损（`\r\n`、`+`、`/` 均不被解码破坏）。
     // 另验证 filter_params：`_unpack_raw` 等控制参数不进入请求体

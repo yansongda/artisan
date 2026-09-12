@@ -332,7 +332,7 @@ pub enum DirectionKind {
 | 类型 | 类别 | 功能 |
 |------|------|------|
 | `JsonPacker` | Packer | JSON 序列化（默认） |
-| `QueryPacker` | Packer | RFC1738 form-urlencoded；`unpack` 支持 `_unpack_raw` 原始模式 |
+| `QueryPacker` | Packer | form-urlencoded（WHATWG URL Standard）；`unpack` 支持 `_unpack_raw` 原始模式 |
 | `XmlPacker` | Packer | CDATA 格式 XML（基于 quick-xml）；叶子文本一律字符串 |
 | `JsonDirection` | Direction | 经 `rocket.packer.unpack` 解析（默认） |
 | `NoHttpRequestDirection` | Direction | `NoRequest`：不发起 HTTP 请求 |
