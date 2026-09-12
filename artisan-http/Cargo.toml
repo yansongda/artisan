@@ -1,6 +1,6 @@
 [package]
 name = "artisan-http"
-version = "0.16.0"
+version = "0.17.0"
 description = "Api RequesT Framework U Like - 你喜欢的 Rust API 请求框架 - an HTTP client with onion-model middleware & a plugin system (the Rust sibling of yansongda/artful)"
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,7 @@ categories = ["network-programming", "web-programming::http-client"]
 
 [dependencies]
 async-trait = { version = "0.1.89" }
+quick-xml = "0.41"
 reqwest = { version = "0.13.2", features = ["json"] }
 serde_json = { version = "1.0" }
 thiserror = { version = "2.0" }

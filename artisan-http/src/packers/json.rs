@@ -17,19 +17,27 @@ pub struct JsonPacker;
 impl Packer for JsonPacker {
     /// 将 HashMap 序列化为 JSON 字符串
     ///
+    /// JSON 序列化器忽略 params（无附加序列化开关）。
+    ///
     /// # Errors
     ///
     /// 返回错误当序列化失败。
-    fn pack(&self, data: &HashMap<String, Value>) -> Result<String> {
+    fn pack(
+        &self,
+        data: &HashMap<String, Value>,
+        _params: &HashMap<String, Value>,
+    ) -> Result<String> {
         serde_json::to_string(data).map_err(Into::into)
     }
 
     /// 将 JSON 字符串反序列化为 Value
     ///
+    /// JSON 序列化器忽略 params（无附加反序列化开关）。
+    ///
     /// # Errors
     ///
     /// 返回错误当反序列化失败。
-    fn unpack(&self, data: &str) -> Result<Value> {
+    fn unpack(&self, data: &str, _params: &HashMap<String, Value>) -> Result<Value> {
         serde_json::from_str(data).map_err(|e| crate::error::ArtfulError::JsonDeserializeError {
             message: e.to_string(),
             source: Some(e),
@@ -53,7 +61,7 @@ mod tests {
         let mut data = HashMap::new();
         data.insert("key".to_string(), json!("value"));
 
-        let result = packer.pack(&data).unwrap();
+        let result = packer.pack(&data, &HashMap::new()).unwrap();
         assert_eq!(result, r#"{"key":"value"}"#);
     }
 
@@ -62,7 +70,7 @@ mod tests {
         let packer = JsonPacker;
         let data = HashMap::new();
 
-        let result = packer.pack(&data).unwrap();
+        let result = packer.pack(&data, &HashMap::new()).unwrap();
         assert_eq!(result, "{}");
     }
 
@@ -71,7 +79,7 @@ mod tests {
         let packer = JsonPacker;
         let json = r#"{"key":"value"}"#;
 
-        let result = packer.unpack(json).unwrap();
+        let result = packer.unpack(json, &HashMap::new()).unwrap();
         assert_eq!(result["key"], json!("value"));
     }
 
@@ -80,7 +88,7 @@ mod tests {
         let packer = JsonPacker;
         let invalid_json = "not json";
 
-        let result = packer.unpack(invalid_json);
+        let result = packer.unpack(invalid_json, &HashMap::new());
         assert!(matches!(
             result.unwrap_err(),
             crate::error::ArtfulError::JsonDeserializeError { .. }

@@ -1,4 +1,4 @@
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, Rocket, Shortcut, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -40,6 +40,7 @@ impl Shortcut for RecordingShortcut {
             }),
             Arc::new(AddPayloadBodyPlugin),
             Arc::new(AddRadarPlugin),
+            Arc::new(ParserPlugin),
         ]
     }
 }
@@ -69,6 +70,7 @@ impl Shortcut for FailingShortcut {
             }),
             Arc::new(FailingPlugin),
             Arc::new(AddRadarPlugin),
+            Arc::new(ParserPlugin),
         ]
     }
 }

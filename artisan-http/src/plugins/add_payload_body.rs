@@ -10,6 +10,7 @@
 //! - 请求头缺失 `Content-Type` 时，按 packer 声明的 [`Packer::content_type`] 补填（不覆盖用户显式设置）
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 
 use crate::Rocket;
 use crate::flow_ctrl::Next;
@@ -27,7 +28,10 @@ impl Plugin for AddPayloadBodyPlugin {
 
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
-            rocket.config.body = Some(rocket.packer.pack(&rocket.payload)?);
+            // 剔除 `_` 前缀控制参数与 null 值后再序列化，避免 `_unpack_raw` 等
+            // 内部参数进入发往网关的请求体（部分网关对全字段验签）
+            let filtered = crate::filter_params(&rocket.payload);
+            rocket.config.body = Some(rocket.packer.pack(&filtered, &HashMap::new())?);
 
             // 判重按头名不区分大小写，用户以任意大小写键显式设置的值都不覆盖
             if let Some(ct) = rocket.packer.content_type() {
@@ -99,6 +103,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn filters_underscore_keys_and_nulls_from_body() {
+        // `filter_params` 剔除 `_` 前缀控制参数与 null 值：
+        // 如 `_unpack_raw` 只影响本侧解包，不能随报文发给网关
+        let params = HashMap::from([
+            ("_unpack_raw".to_string(), json!(true)),
+            ("_secret".to_string(), json!("x")),
+            ("null_field".to_string(), json!(null)),
+            ("order_id".to_string(), json!("123")),
+        ]);
+        let mut rocket = Rocket::new(params);
+        rocket.merge_params_to_payload();
+
+        drive(&mut rocket).await.unwrap();
+
+        let body = rocket.config.body.expect("body should be packed");
+        let value: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value, json!({"order_id": "123"}));
+    }
+
+    #[tokio::test]
     async fn respects_explicit_content_type_case_insensitive() {
         // 用户以小写键显式设置 CT:不应被覆盖为 application/json
         let mut rocket = Rocket::new(HashMap::new());
@@ -121,11 +145,19 @@ mod tests {
         struct NullContentTypePacker;
 
         impl Packer for NullContentTypePacker {
-            fn pack(&self, data: &HashMap<String, Value>) -> crate::Result<String> {
+            fn pack(
+                &self,
+                data: &HashMap<String, Value>,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<String> {
                 Ok(format!("packed:{}", data.len()))
             }
 
-            fn unpack(&self, _data: &str) -> crate::Result<Value> {
+            fn unpack(
+                &self,
+                _data: &str,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<Value> {
                 Ok(Value::Null)
             }
         }
@@ -146,11 +178,19 @@ mod tests {
         struct FailingPacker;
 
         impl Packer for FailingPacker {
-            fn pack(&self, _data: &HashMap<String, Value>) -> crate::Result<String> {
+            fn pack(
+                &self,
+                _data: &HashMap<String, Value>,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<String> {
                 Err(crate::error::ArtfulError::Other("pack failed".to_string()))
             }
 
-            fn unpack(&self, _data: &str) -> crate::Result<Value> {
+            fn unpack(
+                &self,
+                _data: &str,
+                _params: &HashMap<String, Value>,
+            ) -> crate::Result<Value> {
                 Ok(Value::Null)
             }
         }

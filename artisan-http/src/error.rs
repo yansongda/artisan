@@ -3,7 +3,8 @@
 //! 定义框架中所有可能出现的错误类型，包括：
 //! - HTTP 请求错误（RequestFailed）
 //! - HTTP 客户端/请求构建错误（ClientBuildError, `RequestBuildError`）
-//! - 序列化错误（JsonSerializeError, `JsonDeserializeError`)
+//! - 序列化错误（JsonSerializeError, `JsonDeserializeError`）
+//! - XML 序列化错误（XmlSerializeError, `XmlDeserializeError`）
 //! - 插件错误（PluginExecutionError）
 //! - 事件监听器错误（EventListenerError）
 //! - 参数错误（MissingParameter, `InvalidParameter`)
@@ -41,6 +42,20 @@ pub enum ArtfulError {
         message: String,
         #[source]
         source: Option<serde_json::Error>,
+    },
+
+    #[error("failed to serialize XML: {message}")]
+    XmlSerializeError {
+        message: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
+    #[error("failed to deserialize XML: {message}")]
+    XmlDeserializeError {
+        message: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     #[error("plugin execution failed: {plugin_name} - {message}")]
@@ -147,6 +162,27 @@ mod tests {
             source: Some(sample_serde_error()),
         };
         assert!(err.to_string().starts_with("failed to deserialize JSON:"));
+        assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn xml_serialize_error_display_and_source() {
+        let err = ArtfulError::XmlSerializeError {
+            message: "one-dimensional scalars only".to_string(),
+            source: None,
+        };
+        assert!(err.to_string().starts_with("failed to serialize XML:"));
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn xml_deserialize_error_display_and_source() {
+        let source: Box<dyn std::error::Error + Send + Sync> = "invalid xml".into();
+        let err = ArtfulError::XmlDeserializeError {
+            message: "unexpected token".to_string(),
+            source: Some(source),
+        };
+        assert!(err.to_string().starts_with("failed to deserialize XML:"));
         assert!(std::error::Error::source(&err).is_some());
     }
 

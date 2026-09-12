@@ -7,7 +7,13 @@
 //! | 解析器 | 功能 |
 //! |--------|------|
 //! | [`JsonDirection`] | 解析响应为 JSON |
+//! | [`NoHttpRequestDirection`] | 不解析，透传 `rocket.destination` 现有值 |
+//! | [`OriginResponseDirection`] | 不解析，返回原始 HTTP Response |
 
 mod json;
+mod no_http_request;
+mod origin_response;
 
 pub use json::JsonDirection;
+pub use no_http_request::NoHttpRequestDirection;
+pub use origin_response::OriginResponseDirection;

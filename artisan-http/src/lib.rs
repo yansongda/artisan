@@ -31,6 +31,7 @@
 //! | [`StartPlugin`] | 将 params 初始化到 payload |
 //! | [`AddPayloadBodyPlugin`] | 将 payload 序列化为请求体 |
 //! | [`AddRadarPlugin`] | 构建 HTTP Request |
+//! | [`ParserPlugin`] | 解析响应为 destination，必须挂在链尾 |
 //!
 //! # 使用示例
 //!
@@ -55,10 +56,14 @@
 //! }
 //! ```
 
+use std::collections::HashMap;
+
+use serde_json::Value;
+
 pub mod direction;
 pub mod directions;
 pub mod error;
-pub use directions::JsonDirection;
+pub use directions::{JsonDirection, NoHttpRequestDirection, OriginResponseDirection};
 pub mod artful;
 pub mod config;
 pub mod event;
@@ -79,11 +84,27 @@ pub use error::{ArtfulError, Result};
 pub use event::{Event, EventDispatcher, EventListener};
 pub use flow_ctrl::{FlowCtrl, Next};
 pub use packer::Packer;
-pub use packers::JsonPacker;
+pub use packers::{JsonPacker, QueryPacker, XmlPacker};
 pub use plugin::Plugin;
-pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
+pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 pub use rocket::{ClientOptions, RequestOptions, Rocket, RocketConfig};
 pub use shortcut::Shortcut;
+
+/// 过滤用于请求体序列化的 payload：剔除 `_` 前缀键与 `null` 值
+///
+/// `_` 前缀键是控制参数（如 [`QueryPacker`] 的 `_unpack_raw`），只应影响
+/// 本侧行为，不得进入发往网关的请求体——部分网关对全部报文字段验签，
+/// 多出的字段会导致验签失败。`null` 值无业务含义，同样剔除。
+///
+/// [`AddPayloadBodyPlugin`](plugins::AddPayloadBodyPlugin) 打包请求体时
+/// 调用；响应解包侧不做此过滤。
+pub fn filter_params(payload: &HashMap<String, Value>) -> HashMap<String, Value> {
+    payload
+        .iter()
+        .filter(|(k, v)| !k.starts_with('_') && !v.is_null())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -104,8 +125,13 @@ mod tests {
         assert_send_sync::<RocketConfig>();
         assert_send_sync::<ClientOptions>();
         assert_send_sync::<JsonPacker>();
+        assert_send_sync::<QueryPacker>();
+        assert_send_sync::<XmlPacker>();
         assert_send_sync::<JsonDirection>();
+        assert_send_sync::<NoHttpRequestDirection>();
+        assert_send_sync::<OriginResponseDirection>();
         assert_send_sync::<EventDispatcher>();
+        assert_send_sync::<ParserPlugin>();
     }
 
     #[test]

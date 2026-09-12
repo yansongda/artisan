@@ -1,6 +1,6 @@
 //! 自定义插件示例 - 签名插件
 
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -59,6 +59,9 @@ async fn main() -> artisan_http::Result<()> {
         }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
+        // 链尾挂载 ParserPlugin：0.17.0 起响应解析由它承担，忘挂时请求发出
+        // 但 destination 保持 None，下方 Json 分支不会命中
+        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new()?;

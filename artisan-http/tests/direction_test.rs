@@ -1,6 +1,6 @@
 use artisan_http::Rocket;
 use artisan_http::direction::{Destination, Direction, DirectionKind};
-use artisan_http::plugins::AddRadarPlugin;
+use artisan_http::plugins::{AddRadarPlugin, ParserPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -115,6 +115,7 @@ async fn custom_direction_executes_in_chain() {
                     })),
                 }),
                 Arc::new(AddRadarPlugin),
+                Arc::new(ParserPlugin),
             ],
         )
         .await
@@ -150,6 +151,7 @@ async fn custom_direction_error_propagates() {
                     direction: DirectionKind::Custom(Arc::new(FailingDirection)),
                 }),
                 Arc::new(AddRadarPlugin),
+                Arc::new(ParserPlugin),
             ],
         )
         .await;
@@ -196,6 +198,7 @@ async fn no_request_skips_http_and_keeps_chain() {
         }),
         Arc::new(AddRadarPlugin),
         Arc::new(MarkAfterParserPlugin),
+        Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
@@ -241,6 +244,7 @@ async fn response_direction_consumes_origin() {
                 }),
                 Arc::new(AddRadarPlugin),
                 Arc::new(AssertOriginTakenPlugin),
+                Arc::new(ParserPlugin),
             ],
         )
         .await

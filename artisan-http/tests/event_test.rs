@@ -6,7 +6,7 @@
 
 use artisan_http::direction::Destination;
 use artisan_http::event::{Event, EventListener};
-use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
 use serde_json::json;
@@ -163,6 +163,7 @@ fn plugin_chain(method: reqwest::Method, url: String) -> Vec<Arc<dyn Plugin>> {
         Arc::new(MethodUrlPlugin { method, url }),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
     ]
 }
 
@@ -400,7 +401,10 @@ async fn no_request_plugin_returns_none() {
     let artful = artful_with_listeners(vec![recorder]);
 
     let result = artful
-        .artful(HashMap::new(), vec![Arc::new(SetNoRequestPlugin)])
+        .artful(
+            HashMap::new(),
+            vec![Arc::new(SetNoRequestPlugin), Arc::new(ParserPlugin)],
+        )
         .await
         .unwrap();
 
@@ -416,7 +420,10 @@ async fn plugin_not_calling_next_skips_http_events() {
     let artful = artful_with_listeners(vec![recorder]);
 
     let result = artful
-        .artful(HashMap::new(), vec![Arc::new(ShortCircuitOkPlugin)])
+        .artful(
+            HashMap::new(),
+            vec![Arc::new(ShortCircuitOkPlugin), Arc::new(ParserPlugin)],
+        )
         .await
         .unwrap();
 
