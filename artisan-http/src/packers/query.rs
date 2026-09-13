@@ -10,8 +10,8 @@
 //!   `Bool(false)` → `"0"`；`Null` 跳过整个键值对
 //! - `Array`/`Object` 递归展开为 `k[sub]` 语法（Object 用键名、Array 用
 //!   下标 `a[0]`），空容器跳过（不产出任何键值对）；递归深度不限
-//! - 多项以 `&` 连接为 `k=v`；顶层键先按字典序升序排序后输出
-//!   （**确定性**：HashMap 无序，排序保证签名场景可复现）
+//! - 多项以 `&` 连接为 `k=v`；顶层键按字典序输出
+//!   （**确定性**：Map（BTreeMap 后端）天然有序，签名场景可复现）
 //!
 //! # unpack 解析语义
 //!
@@ -51,7 +51,7 @@ use serde_json::{Map, Value};
 pub struct QueryPacker;
 
 impl Packer for QueryPacker {
-    /// 将 HashMap 编码为 `application/x-www-form-urlencoded` 表单字符串
+    /// 将 Map 编码为 `application/x-www-form-urlencoded` 表单字符串
     ///
     /// Query 序列化器忽略 params（pack 无附加开关）。
     ///
@@ -60,11 +60,9 @@ impl Packer for QueryPacker {
     /// 本实现不会产生错误，恒返回 `Ok`。
     fn pack(&self, data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String> {
         let mut parts: Vec<String> = Vec::new();
-        // 顶层键升序排序后输出（HashMap 无序，排序保证确定性）
-        let mut keys: Vec<&String> = data.keys().collect();
-        keys.sort_unstable();
-        for key in keys {
-            pack_entry(key, &data[key], &mut parts);
+        // Map（BTreeMap 后端）天然有序，直接按字典序遍历
+        for (key, value) in data {
+            pack_entry(key, value, &mut parts);
         }
 
         Ok(parts.join("&"))
@@ -402,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_pack_basic() {
-        // 顶层键升序排序后输出（确定性）
+        // 顶层键按字典序输出（Map 天然有序）
         let packer = QueryPacker;
         let data = Map::from_iter([
             ("name".to_string(), json!("yansongda")),

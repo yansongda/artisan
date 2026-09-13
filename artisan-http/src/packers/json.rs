@@ -14,7 +14,7 @@ use crate::packer::Packer;
 pub struct JsonPacker;
 
 impl Packer for JsonPacker {
-    /// 将 HashMap 序列化为 JSON 字符串
+    /// 将 Map 序列化为 JSON 字符串
     ///
     /// JSON 序列化器忽略 params（无附加序列化开关）。
     ///
@@ -58,6 +58,21 @@ mod tests {
 
         let result = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(result, r#"{"key":"value"}"#);
+    }
+
+    #[test]
+    fn test_json_packer_pack_key_order_deterministic() {
+        // 乱序插入的键：pack 输出由 Map（BTreeMap 后端）天然字典序保证，
+        // 直接断言输出字符串（不用 from_str 解析后比较键序，否则恒真无验证力）
+        let packer = JsonPacker;
+        let data = Map::from_iter([
+            ("c".to_string(), json!(3)),
+            ("a".to_string(), json!(1)),
+            ("b".to_string(), json!(2)),
+        ]);
+
+        let packed = packer.pack(&data, &Map::new()).unwrap();
+        assert_eq!(packed, r#"{"a":1,"b":2,"c":3}"#);
     }
 
     #[test]

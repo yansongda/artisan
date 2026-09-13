@@ -10,7 +10,6 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use quick_xml::name::QName;
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
 
 use crate::Result;
 use crate::error::ArtfulError;
@@ -21,8 +20,8 @@ use crate::packer::Packer;
 /// # pack 行为
 ///
 /// 产出 `<xml>` 包裹的单层节点：数值为纯文本，其余标量为 CDATA；
-/// 空数据输出 `<xml></xml>`；顶层键按字典序升序输出（HashMap 无序，
-/// 排序保证输出确定性，签名场景可复现）。
+/// 空数据输出 `<xml></xml>`；顶层键按字典序输出（Map 天然有序，
+/// 签名场景可复现）。
 ///
 /// # unpack 行为
 ///
@@ -41,12 +40,12 @@ use crate::packer::Packer;
 /// - 实体引用（含数字字符引用）解引用后并入文本；未定义实体与 XML 1.0
 ///   非法字符引用报错
 /// - XML 属性被丢弃；命名空间前缀保留原文（如 `ns:a`）；解析结果的键序
-///   按字母序（serde_json Map 默认 BTreeMap，JSON 语义上无影响）
+///   按字母序（Map 天然有序，JSON 语义上无影响）
 #[derive(Debug, Clone, Copy, Default)]
 pub struct XmlPacker;
 
 impl Packer for XmlPacker {
-    /// 将 HashMap 序列化为 XML 字符串
+    /// 将 Map 序列化为 XML 字符串
     ///
     /// XML 序列化器忽略 params（无附加序列化开关）。
     ///
@@ -61,11 +60,9 @@ impl Packer for XmlPacker {
         }
 
         let mut out = String::from("<xml>");
-        // 顶层键升序排序后输出（HashMap 无序，排序保证确定性）
-        let mut keys: Vec<&String> = data.keys().collect();
-        keys.sort_unstable();
-        for key in keys {
-            out.push_str(&Self::render_entry(key, &data[key])?);
+        // Map 天然有序，直接按字典序遍历
+        for (key, value) in data {
+            out.push_str(&Self::render_entry(key, value)?);
         }
         out.push_str("</xml>");
         Ok(out)
@@ -261,7 +258,7 @@ struct XmlElement {
     /// 首个直接内容节点为文本时的空白判定（`None` = 首个内容不是文本）；
     /// 决定 `finish` 是否走“字符串拼接”分支
     first_text_blank: Option<bool>,
-    children: BTreeMap<String, Value>,
+    children: Map<String, Value>,
 }
 
 impl XmlElement {
@@ -270,7 +267,7 @@ impl XmlElement {
             name,
             text: String::new(),
             first_text_blank: None,
-            children: BTreeMap::new(),
+            children: Map::new(),
         }
     }
 
@@ -290,7 +287,7 @@ impl XmlElement {
     /// 挂载子节点；同名兄弟元素第二次出现 → 该 key 转为
     /// [`Value::Array`] 追加
     fn insert_child(&mut self, name: String, value: Value) {
-        use std::collections::btree_map::Entry;
+        use serde_json::map::Entry;
 
         match self.children.entry(name) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
@@ -431,7 +428,7 @@ mod tests {
         ]);
 
         let result = packer.pack(&data, &Map::new()).unwrap();
-        // 顶层键升序排序后输出（确定性）：age < name
+        // 顶层键按字典序输出（Map 天然有序）：age < name
         assert_eq!(
             result,
             "<xml><age>29</age><name><![CDATA[yansongda]]></name></xml>"
