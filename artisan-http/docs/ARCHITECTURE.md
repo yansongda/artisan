@@ -37,10 +37,10 @@ Rocket 是整个请求生命周期中的数据载体。
 /// 请求载体 - 携带整个请求生命周期中的所有数据
 pub struct Rocket {
     /// 原始参数（不变）
-    params: HashMap<String, Value>,
+    params: Map<String, Value>,
     
     /// 业务参数（动态）
-    pub payload: HashMap<String, Value>,
+    pub payload: Map<String, Value>,
     
     /// Rocket 配置（可修改）
     pub config: RocketConfig,
@@ -70,7 +70,15 @@ pub struct Rocket {
 - `radar` - 最终构建的 HTTP Request
 - `destination_origin` - HTTP 响应
 - `destination` - 解析后的结果
-- `packer` - 序列化器
+- `packer` - 序列化器（请求级配置：请求链早期设定一次，框架不承诺链中途替换语义）
+
+> **数据域（0.18.0 起）**：`params` / `payload` 与 `Packer` trait 的数据域统一为
+> `serde_json::Map<String, Value>`（未启用 `preserve_order` 特性时为 BTreeMap 后端，
+> 键按字典序排列）。键序保证基于 serde_json 默认 BTreeMap 后端；下游一旦启用
+> `preserve_order` 特性（Cargo 特性合并全局生效），`Map` 变为 IndexMap（插入序），
+> 框架不额外兜底。
+> packer 定位：请求级配置，请求链早期设定一次（如渠道插件按请求设定 packer），
+> 框架不承诺链中途替换语义。
 
 ### 2.2 RocketConfig - 配置参数
 
@@ -425,7 +433,7 @@ Shortcut 是一系列插件的组合，方便快速调用特定 API。
 /// 快捷方式 trait（dyn compatible，支持 trait object）
 pub trait Shortcut {
     /// 返回插件列表
-    fn get_plugins(&self, params: &HashMap<String, Value>) 
+    fn get_plugins(&self, params: &Map<String, Value>) 
         -> Vec<Arc<dyn Plugin>>;
 }
 
@@ -435,7 +443,7 @@ pub struct QueryOrderShortcut {
 }
 
 impl Shortcut for QueryOrderShortcut {
-    fn get_plugins(&self, _params: &HashMap<String, Value>) 
+    fn get_plugins(&self, _params: &Map<String, Value>) 
         -> Vec<Arc<dyn Plugin>> 
     {
         vec![
@@ -501,7 +509,7 @@ impl Artful {
     /// 执行插件链
     pub async fn artful(
         &self,
-        params: HashMap<String, Value>,
+        params: Map<String, Value>,
         plugins: Vec<Arc<dyn Plugin>>,
     ) -> Result<Destination> {
         // 构建载体（params 存储原始参数，payload 初始为空）
@@ -527,7 +535,7 @@ impl Artful {
     pub async fn shortcut<S: Shortcut>(
         &self,
         shortcut: S,
-        params: HashMap<String, Value>,
+        params: Map<String, Value>,
     ) -> Result<Destination> {
         let plugins = shortcut.get_plugins(&params);
         self.artful(params, plugins).await
@@ -560,6 +568,27 @@ impl ArtfulBuilder {
 ```
 
 > `ArtfulBuilder` 另实现 `Default` 与手写 `Debug`（装箱字段仅打印是否注入），满足 `Send`（非 `Sync`）。
+
+#### 3.1.1 typed 便利层（0.18.0）
+
+在纯 `Value` 流程之上新增强类型出入口，业务结构体直接进出（底层仍是 `artful()` 洋葱链路）：
+
+```rust
+// Packer 层（dyn 兼容）：业务结构体 ↔ 请求体 / 响应体
+let body = pack_typed(packer.as_ref(), &order, &params)?;                  // T: Serialize
+let order: OrderResp = unpack_typed(packer.as_ref(), &body, &params)?;     // T: DeserializeOwned
+
+// Destination 视图方法：Json → Ok(Value)；Response / None → DestinationMismatch
+let value = destination.into_json()?;
+
+// 强类型入口：artful() → into_json() → from_value::<T>
+let order: OrderResp = artful.artful_as(params, plugins).await?;
+```
+
+错误处理：`pack_typed` 序列化失败复用 `JsonSerializeError`、输入非 JSON 对象复用
+`InvalidParameter`；`unpack_typed` 反序列化失败复用 `JsonDeserializeError`（message 注明
+目标类型）；`into_json` / `artful_as` 遇 `Response`/`None` 方向返回新增错误变体
+`DestinationMismatch`（字段 `expected: &'static str`、`actual: String`）。
 
 ### 3.2 HTTP 客户端设计
 
@@ -786,7 +815,7 @@ impl Plugin for AddPayloadBodyPlugin {
     async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> Result<()> {
         // 如果未手动指定 body，将 payload 按 packer 序列化（params 传空，对齐 PHP 内置链传 null）
         if rocket.config.body.is_none() && !rocket.payload.is_empty() {
-            rocket.config.body = Some(rocket.packer.pack(&rocket.payload, &HashMap::new())?);
+            rocket.config.body = Some(rocket.packer.pack(&rocket.payload, &Map::new())?);
 
             // 请求头缺失 Content-Type 时按 packer 声明补头
             // （判重按头名不区分大小写，不覆盖用户以任意大小写显式设置的值）
@@ -827,7 +856,7 @@ impl Plugin for AddRadarPlugin {
         if let Some(body) = &rocket.config.body {
             request_builder = request_builder.body(body.clone());
         } else if !rocket.payload.is_empty() {
-            let body = rocket.packer.pack(&rocket.payload, &HashMap::new())?;
+            let body = rocket.packer.pack(&rocket.payload, &Map::new())?;
 
             if !rocket.has_header("Content-Type") {
                 if let Some(ct) = rocket.packer.content_type() {
@@ -1024,7 +1053,7 @@ use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
 use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::collections::HashMap;
+use serde_json::Map;
 use serde_json::json;
 
 struct MethodUrlPlugin {
@@ -1045,9 +1074,9 @@ impl Plugin for MethodUrlPlugin {
 async fn main() -> artisan_http::Result<()> {
     let artful = Artful::new()?;
 
-    let params = HashMap::from([
-        ("order_id", json!("123")),
-        ("amount", json!(100)),
+    let params = Map::from_iter([
+        ("order_id".to_string(), json!("123")),
+        ("amount".to_string(), json!(100)),
     ]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
@@ -1077,7 +1106,7 @@ async fn main() -> artisan_http::Result<()> {
 use artisan_http::{Artful, Shortcut, Plugin};
 use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
-use std::collections::HashMap;
+use serde_json::Map;
 
 struct MyApiShortcut {
     method: reqwest::Method,
@@ -1085,7 +1114,7 @@ struct MyApiShortcut {
 }
 
 impl Shortcut for MyApiShortcut {
-    fn get_plugins(&self, _params: &HashMap<String, serde_json::Value>) 
+    fn get_plugins(&self, _params: &Map<String, serde_json::Value>) 
         -> Vec<Arc<dyn Plugin>> 
     {
         vec![
@@ -1107,7 +1136,7 @@ let shortcut = MyApiShortcut {
     method: reqwest::Method::POST,
     url: "https://api.example.com/orders".to_string(),
 };
-let result = artful.shortcut(shortcut, HashMap::new()).await?;
+let result = artful.shortcut(shortcut, Map::new()).await?;
 ```
 
 **说明**：Shortcut 不需要 `Default` bound，可以在构造时携带任意状态（method、url 等），更灵活地配置请求。

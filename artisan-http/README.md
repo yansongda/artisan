@@ -34,8 +34,7 @@ use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
 use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::collections::HashMap;
-use serde_json::json;
+use serde_json::{Map, json};
 
 struct MethodUrlPlugin {
     method: reqwest::Method,
@@ -53,7 +52,7 @@ impl Plugin for MethodUrlPlugin {
 
 #[tokio::main]
 async fn main() -> artisan_http::Result<()> {
-    let params = HashMap::from([
+    let params = Map::from_iter([
         ("order_id".to_string(), json!("123")),
         ("amount".to_string(), json!(100)),
     ]);
@@ -86,7 +85,7 @@ async fn main() -> artisan_http::Result<()> {
 use artisan_http::{Artful, Shortcut, Plugin};
 use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
-use std::collections::HashMap;
+use serde_json::Map;
 
 #[derive(Default)]
 struct MyApiShortcut {
@@ -95,7 +94,7 @@ struct MyApiShortcut {
 }
 
 impl Shortcut for MyApiShortcut {
-    fn get_plugins(&self, _params: &HashMap<String, serde_json::Value>) 
+    fn get_plugins(&self, _params: &Map<String, serde_json::Value>) 
         -> Vec<Arc<dyn Plugin>> 
     {
         vec![
@@ -116,7 +115,7 @@ let shortcut = MyApiShortcut {
     url: "https://api.example.com/orders".to_string(),
 };
 let artful = Artful::new()?;
-let result = artful.shortcut(shortcut, HashMap::new()).await?;
+let result = artful.shortcut(shortcut, Map::new()).await?;
 ```
 
 ### Global Singleton (LazyLock)
@@ -252,6 +251,29 @@ let artful = Artful::builder()
 
 Try it: `cargo run -p artisan-http --example event`.
 
+### Typed Helpers
+
+0.18.0 adds a typed convenience layer on top of the plain `Value`-based flow, so business structs can go straight in and out:
+
+```rust
+use artisan_http::{Artful, Destination, pack_typed, unpack_typed};
+use serde_json::Map;
+
+// Serialize a business struct into the request body (packer-level, dyn-compatible)
+let body = pack_typed(packer.as_ref(), &order, &params)?;
+
+// Deserialize a response body into a business struct
+let order: OrderResp = unpack_typed(packer.as_ref(), &body, &params)?;
+
+// Destination → Value (`Json` direction; `Response`/`None` yield `DestinationMismatch`)
+let value: serde_json::Value = destination.into_json()?;
+
+// Strongly-typed entry point: artful() → into_json() → from_value::<T>
+let order: OrderResp = artful.artful_as(params, plugins).await?;
+```
+
+Error handling: `pack_typed` reuses `JsonSerializeError` on serialization failure and `InvalidParameter` when the input does not serialize to a JSON object; `unpack_typed` reuses `JsonDeserializeError` (message names the target type); `into_json` / `artful_as` return the new `DestinationMismatch` variant when the destination is `Response` or `None`.
+
 ## Core Concepts
 
 ### Rocket - The Request Carrier
@@ -260,8 +282,8 @@ Try it: `cargo run -p artisan-http --example event`.
 
 ```rust
 pub struct Rocket {
-    params: HashMap<String, Value>,   // raw params (immutable)
-    pub payload: HashMap<String, Value>, // business params (mutable)
+    params: Map<String, Value>,   // raw params (immutable)
+    pub payload: Map<String, Value>, // business params (mutable)
     pub config: RocketConfig,         // HTTP config (mutable)
     pub radar: Option<Request>,       // the HTTP request object
     pub destination: Option<Destination>, // parsed result
@@ -327,6 +349,40 @@ pub enum DirectionKind {
 > HTTP execution is handled by the framework's built-in tail core action `IgniteCore`, mounted automatically by `Artful::artful` / `Artful::shortcut`. Response parsing is the job of `ParserPlugin`: **the plugin chain must include `ParserPlugin` as its last entry** - if you forget it, the request is still sent but nothing is parsed (`rocket.destination` stays `None`). The minimal chain shape is `[StartPlugin, ..., AddRadarPlugin, ParserPlugin]`.
 >
 > **Migrating from 0.16.0**: append `Arc::new(ParserPlugin)` to the end of your plugin chain. Also note `Packer::pack` / `Packer::unpack` now take an extra `params: &HashMap<String, Value>` argument (custom `Packer` implementations just add the parameter, usually ignored), and `JsonDirection` unpacks the response body via `rocket.packer.unpack` (default path unchanged; with `rocket.packer` set to `XmlPacker`, responses are unpacked as XML). See the CHANGELOG 0.17.0 entry for details.
+
+### Migrating from 0.17.0
+
+0.18.0 migrates the payload data domain from the old `HashMap` to `serde_json::Map<String, Value>` (BTreeMap-backed without the `preserve_order` feature; keys sort lexicographically). Six public APIs changed signature, and one impl was removed:
+
+- `Packer::pack` / `Packer::unpack`: `params` parameter `&HashMap` → `&Map<String, Value>`
+- `Rocket::new` / `payload` / `get_params`: `HashMap` → `Map<String, Value>`
+- `Artful::artful` / `shortcut`: `params` → `Map<String, Value>`
+- `Shortcut::get_plugins`: parameter → `&Map<String, Value>`
+- `filter_params`: → `Map<String, Value>`
+- `Event::ArtfulStart.params`: → `&Map<String, Value>`
+- Removed: `From<HashMap> for Rocket` (construct via `Rocket::new(Map::new())` / `Rocket::new(Map::from_iter([...]))` instead)
+
+Migration recipe:
+
+```rust
+// Old (0.17.x)
+use std::collections::HashMap;
+let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+let rocket = Rocket::new(params);
+
+// New (0.18.0) — note serde_json::Map has no From<[(K,V); N]>, use from_iter
+use serde_json::Map;
+let params: Map<String, Value> = Map::from_iter([("order_id".to_string(), json!("123"))]);
+let rocket = Rocket::new(params);
+
+// Custom Packer migration: only the parameter type changes
+// fn pack(&self, data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String>
+
+// Typed entry point (new capability)
+let order: OrderResp = artful.artful_as(params, plugins).await?;
+```
+
+Also note: `JsonPacker` output key order changed from random to lexicographic, packer is now positioned as **request-level configuration set early in the chain (no mid-chain replacement promise)**, and the new `DestinationMismatch` error variant requires an extra arm in exhaustive `ArtfulError` matches. See the CHANGELOG 0.18.0 entry for the full list.
 
 ### Built-in Packers & Directions
 
