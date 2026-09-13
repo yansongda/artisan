@@ -33,11 +33,11 @@ impl Direction for OriginResponseDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use serde_json::Map;
 
     /// 构造携带原始响应的 Rocket(经 http::Response 转换，无需网络)
     fn rocket_with_response() -> Rocket {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         let inner = http::Response::builder()
             .status(200)
             .body(Vec::new())
@@ -60,7 +60,7 @@ mod tests {
     #[tokio::test]
     async fn missing_response_when_origin_absent() {
         // origin 缺失：返回 MissingResponse
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         let result = OriginResponseDirection.parse(&mut rocket).await;
 

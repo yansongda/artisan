@@ -2,8 +2,7 @@
 //!
 //! 实现 [`Packer`] trait，提供 JSON 序列化/反序列化功能。
 
-use serde_json::Value;
-use std::collections::HashMap;
+use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::packer::Packer;
@@ -22,11 +21,7 @@ impl Packer for JsonPacker {
     /// # Errors
     ///
     /// 返回错误当序列化失败。
-    fn pack(
-        &self,
-        data: &HashMap<String, Value>,
-        _params: &HashMap<String, Value>,
-    ) -> Result<String> {
+    fn pack(&self, data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String> {
         serde_json::to_string(data).map_err(Into::into)
     }
 
@@ -37,7 +32,7 @@ impl Packer for JsonPacker {
     /// # Errors
     ///
     /// 返回错误当反序列化失败。
-    fn unpack(&self, data: &str, _params: &HashMap<String, Value>) -> Result<Value> {
+    fn unpack(&self, data: &str, _params: &Map<String, Value>) -> Result<Value> {
         serde_json::from_str(data).map_err(|e| crate::error::ArtfulError::JsonDeserializeError {
             message: e.to_string(),
             source: Some(e),
@@ -58,19 +53,19 @@ mod tests {
     #[test]
     fn test_json_packer_pack() {
         let packer = JsonPacker;
-        let mut data = HashMap::new();
+        let mut data = Map::new();
         data.insert("key".to_string(), json!("value"));
 
-        let result = packer.pack(&data, &HashMap::new()).unwrap();
+        let result = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(result, r#"{"key":"value"}"#);
     }
 
     #[test]
     fn test_json_packer_pack_empty() {
         let packer = JsonPacker;
-        let data = HashMap::new();
+        let data = Map::new();
 
-        let result = packer.pack(&data, &HashMap::new()).unwrap();
+        let result = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(result, "{}");
     }
 
@@ -79,7 +74,7 @@ mod tests {
         let packer = JsonPacker;
         let json = r#"{"key":"value"}"#;
 
-        let result = packer.unpack(json, &HashMap::new()).unwrap();
+        let result = packer.unpack(json, &Map::new()).unwrap();
         assert_eq!(result["key"], json!("value"));
     }
 
@@ -88,7 +83,7 @@ mod tests {
         let packer = JsonPacker;
         let invalid_json = "not json";
 
-        let result = packer.unpack(invalid_json, &HashMap::new());
+        let result = packer.unpack(invalid_json, &Map::new());
         assert!(matches!(
             result.unwrap_err(),
             crate::error::ArtfulError::JsonDeserializeError { .. }

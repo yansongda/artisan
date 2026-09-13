@@ -35,8 +35,8 @@ impl Plugin for StartPlugin {
 mod tests {
     use super::*;
     use crate::flow_ctrl::FlowCtrl;
+    use serde_json::Map;
     use serde_json::json;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     async fn drive(rocket: &mut Rocket, extra: Option<Arc<dyn Plugin>>) -> crate::Result<()> {
@@ -49,7 +49,7 @@ mod tests {
 
     #[tokio::test]
     async fn merges_params_to_empty_payload() {
-        let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+        let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
         let mut rocket = Rocket::new(params);
 
         drive(&mut rocket, None).await.unwrap();
@@ -62,7 +62,7 @@ mod tests {
     #[tokio::test]
     async fn keeps_existing_payload_when_params_present() {
         // payload 已被先前插件填充时,不应再用 params 覆盖
-        let params = HashMap::from([("outer".to_string(), json!("param"))]);
+        let params = Map::from_iter([("outer".to_string(), json!("param"))]);
         let mut rocket = Rocket::new(params);
         rocket.payload.insert("inner".to_string(), json!("prefill"));
 
@@ -74,7 +74,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_op_when_both_empty() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         drive(&mut rocket, None).await.unwrap();
 
@@ -93,7 +93,7 @@ mod tests {
             }
         }
 
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         drive(&mut rocket, Some(Arc::new(MarkPlugin)))
             .await

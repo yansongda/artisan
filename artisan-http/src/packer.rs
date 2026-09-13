@@ -6,8 +6,7 @@
 //!
 //! - [`JsonPacker`](crate::packers::JsonPacker) - JSON 序列化器（默认）
 
-use serde_json::Value;
-use std::collections::HashMap;
+use serde_json::{Map, Value};
 
 use crate::Result;
 
@@ -22,11 +21,7 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// 返回错误当序列化失败。
-    fn pack(
-        &self,
-        data: &HashMap<String, Value>,
-        params: &HashMap<String, Value>,
-    ) -> Result<String>;
+    fn pack(&self, data: &Map<String, Value>, params: &Map<String, Value>) -> Result<String>;
 
     /// 反序列化数据
     ///
@@ -35,7 +30,7 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// 返回错误当反序列化失败。
-    fn unpack(&self, data: &str, params: &HashMap<String, Value>) -> Result<Value>;
+    fn unpack(&self, data: &str, params: &Map<String, Value>) -> Result<Value>;
 
     /// 获取序列化后请求体的 Content-Type
     ///
@@ -50,21 +45,16 @@ pub trait Packer: Send + Sync + std::fmt::Debug {
 mod tests {
     use super::*;
     use serde_json::Value;
-    use std::collections::HashMap;
 
     #[derive(Debug)]
     struct NoContentTypePacker;
 
     impl Packer for NoContentTypePacker {
-        fn pack(
-            &self,
-            _data: &HashMap<String, Value>,
-            _params: &HashMap<String, Value>,
-        ) -> Result<String> {
+        fn pack(&self, _data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String> {
             Ok(String::new())
         }
 
-        fn unpack(&self, _data: &str, _params: &HashMap<String, Value>) -> Result<Value> {
+        fn unpack(&self, _data: &str, _params: &Map<String, Value>) -> Result<Value> {
             Ok(Value::Null)
         }
     }

@@ -58,7 +58,7 @@ impl Plugin for AddRadarPlugin {
 mod tests {
     use super::*;
     use crate::flow_ctrl::FlowCtrl;
-    use std::collections::HashMap;
+    use serde_json::Map;
     use std::sync::Arc;
 
     async fn drive(rocket: &mut Rocket) -> crate::Result<()> {
@@ -68,7 +68,7 @@ mod tests {
 
     #[tokio::test]
     async fn builds_request_from_config() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.set_method(reqwest::Method::PUT);
         rocket.set_url("http://example.com/anything");
         rocket.add_header("X-Test", "1");
@@ -97,7 +97,7 @@ mod tests {
     #[tokio::test]
     async fn empty_payload_no_body() {
         // payload 为空且未设置 body:请求不应携带 body,也不补 CT
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.set_url("http://example.com/anything");
 
         drive(&mut rocket).await.unwrap();
@@ -109,7 +109,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_error_propagates_on_invalid_url() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.set_url("not a valid url");
 
         let result = drive(&mut rocket).await;

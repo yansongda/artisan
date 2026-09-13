@@ -4,10 +4,9 @@
 //!
 //! 用于简化多个 API 使用相同插件组合的场景。
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::plugin::Plugin;
 
@@ -20,7 +19,7 @@ use crate::plugin::Plugin;
 /// ```
 pub trait Shortcut {
     /// 根据参数返回插件列表
-    fn get_plugins(&self, params: &HashMap<String, Value>) -> Vec<Arc<dyn Plugin>>;
+    fn get_plugins(&self, params: &Map<String, Value>) -> Vec<Arc<dyn Plugin>>;
 }
 
 #[cfg(test)]
@@ -31,7 +30,7 @@ mod tests {
     struct TestShortcut;
 
     impl Shortcut for TestShortcut {
-        fn get_plugins(&self, _params: &HashMap<String, Value>) -> Vec<Arc<dyn Plugin>> {
+        fn get_plugins(&self, _params: &Map<String, Value>) -> Vec<Arc<dyn Plugin>> {
             vec![
                 Arc::new(StartPlugin),
                 Arc::new(AddPayloadBodyPlugin),
@@ -43,7 +42,7 @@ mod tests {
     #[test]
     fn test_shortcut_basic() {
         let shortcut = TestShortcut;
-        let plugins = shortcut.get_plugins(&HashMap::new());
+        let plugins = shortcut.get_plugins(&Map::new());
 
         assert_eq!(plugins.len(), 3);
     }

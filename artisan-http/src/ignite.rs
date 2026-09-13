@@ -113,13 +113,13 @@ mod tests {
     use crate::event::test_util::VariantRecorder;
     use crate::event::{Event, EventDispatcher, EventListener};
     use crate::flow_ctrl::FlowCtrl;
-    use std::collections::HashMap;
+    use serde_json::Map;
     use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn no_request_skips_execution() {
         // NoRequest:不发起请求,destination 保持 None
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.config.direction = DirectionKind::NoRequest;
 
         let mut ctrl = FlowCtrl::new(vec![]);
@@ -133,7 +133,7 @@ mod tests {
     #[tokio::test]
     async fn missing_request_when_radar_absent() {
         // radar 为 None(链中缺少 AddRadarPlugin)→ MissingRequest,不触碰网络
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         let mut ctrl = FlowCtrl::new(vec![]);
         ctrl.set_core(Arc::new(IgniteCore));
@@ -147,7 +147,7 @@ mod tests {
         // radar 为 None:HttpStart 已分发(radar.take 之前),但 MissingRequest
         // 属请求前置失败,不触发 HttpError
         let records = Arc::new(Mutex::new(Vec::new()));
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         let mut dispatcher = EventDispatcher::default();
         dispatcher.add_listener(Arc::new(VariantRecorder {
@@ -189,7 +189,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.config.method = reqwest::Method::POST;
         rocket.config.url = format!("http://127.0.0.1:{port}/boom");
         rocket.client = reqwest::Client::new();
@@ -226,7 +226,7 @@ mod tests {
     async fn no_events_field_no_dispatch() {
         // events 为 None:行为与改造前完全一致
         // 场景一:NoRequest 不发起请求(镜像 no_request_skips_execution 断言)
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.config.direction = DirectionKind::NoRequest;
 
         let mut ctrl = FlowCtrl::new(vec![]);
@@ -237,7 +237,7 @@ mod tests {
         assert!(rocket.destination_origin.is_none());
 
         // 场景二:radar 缺失返回 MissingRequest(镜像 missing_request_when_radar_absent 断言)
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         let mut ctrl = FlowCtrl::new(vec![]);
         ctrl.set_core(Arc::new(IgniteCore));

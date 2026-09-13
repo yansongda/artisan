@@ -56,9 +56,7 @@
 //! }
 //! ```
 
-use std::collections::HashMap;
-
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub mod direction;
 pub mod directions;
@@ -98,7 +96,7 @@ pub use shortcut::Shortcut;
 ///
 /// [`AddPayloadBodyPlugin`](plugins::AddPayloadBodyPlugin) 打包请求体时
 /// 调用；响应解包侧不做此过滤。
-pub fn filter_params(payload: &HashMap<String, Value>) -> HashMap<String, Value> {
+pub fn filter_params(payload: &Map<String, Value>) -> Map<String, Value> {
     payload
         .iter()
         .filter(|(k, v)| !k.starts_with('_') && !v.is_null())

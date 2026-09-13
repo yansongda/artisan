@@ -22,11 +22,10 @@
 //! HTTP 生命周期事件（HttpStart/HttpEnd/HttpError）由框架内置链尾核心动作
 //! `IgniteCore` 分发，`artful()` 自动挂载，无需用户插件。
 
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::config::Config;
@@ -160,7 +159,7 @@ impl Artful {
     /// - 响应解析失败
     pub async fn artful(
         &self,
-        params: HashMap<String, Value>,
+        params: Map<String, Value>,
         plugins: Vec<Arc<dyn Plugin>>,
     ) -> Result<Destination> {
         let mut rocket = Rocket::new(params);
@@ -207,7 +206,7 @@ impl Artful {
     pub async fn shortcut<S: Shortcut>(
         &self,
         shortcut: S,
-        params: HashMap<String, Value>,
+        params: Map<String, Value>,
     ) -> Result<Destination> {
         let plugins = shortcut.get_plugins(&params);
         self.artful(params, plugins).await
@@ -387,7 +386,7 @@ mod tests {
         // 同模块测试可写私有字段：注入带监听器的分发器
         artful.events = Arc::new(events);
 
-        let result = artful.artful(HashMap::new(), vec![]).await;
+        let result = artful.artful(Map::new(), vec![]).await;
 
         assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
         assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "HttpStart"]);
@@ -415,7 +414,7 @@ mod tests {
         artful.events = Arc::new(events);
 
         let destination = artful
-            .artful(HashMap::new(), vec![Arc::new(SetNoRequestPlugin)])
+            .artful(Map::new(), vec![Arc::new(SetNoRequestPlugin)])
             .await
             .unwrap();
 
