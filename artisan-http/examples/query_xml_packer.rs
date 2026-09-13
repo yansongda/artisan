@@ -26,8 +26,7 @@ use artisan_http::{
     flow_ctrl::Next,
 };
 use async_trait::async_trait;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
 /// 设置 HTTP 方法和 URL 的插件
@@ -74,7 +73,7 @@ async fn main() -> artisan_http::Result<()> {
     let artful = Artful::new()?;
 
     // ---- 演示 1：QueryPacker - payload 编码为 query 表单体 ----
-    let mut params = HashMap::new();
+    let mut params: Map<String, Value> = Map::new();
     params.insert("biz_type".to_string(), json!("purchase"));
     params.insert("order_no".to_string(), json!("202609010001"));
 
@@ -105,7 +104,7 @@ async fn main() -> artisan_http::Result<()> {
     }
 
     // ---- 演示 2：XmlPacker - payload 打包为 XML 请求体 ----
-    let mut params = HashMap::new();
+    let mut params: Map<String, Value> = Map::new();
     params.insert("out_trade_no".to_string(), json!("202609010002"));
     params.insert("total_amount".to_string(), json!("10.00"));
 
@@ -145,7 +144,7 @@ async fn main() -> artisan_http::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    match artful.artful(HashMap::new(), plugins).await {
+    match artful.artful(Map::new(), plugins).await {
         Ok(artisan_http::Destination::Json(json)) => println!("XmlPacker 解析结果: {}", json),
         Ok(other) => println!("Destination: {other:?}"),
         Err(err) => eprintln!("[warn] request failed (network unavailable?): {err}"),

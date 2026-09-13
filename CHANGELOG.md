@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > 本文件仅记录 artisan facade 相关变更，各子 crate 变更详见各自目录下的 CHANGELOG.md
 
+## [0.18.0] - 2026-09-13
+
+### Added
+
+- 透传 `artisan-http` 0.18.0 新增的 typed 便利层：`pack_typed` / `unpack_typed`（Packer 层强类型出入口）、`Destination::into_json`（destination 转 `serde_json::Value`）、`Artful::artful_as`（强类型入口）与新增错误变体 `DestinationMismatch`，详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+
+### Changed
+
+- **BREAKING**: 同步 `artisan-http` 0.18.0——payload 数据域整体从 `HashMap<String, Value>` 迁移到 `serde_json::Map<String, Value>`（未启用 `preserve_order` 特性时为 BTreeMap 后端，键按字典序排列），涉及 `Packer::pack`/`unpack`、`Rocket::new`/`payload`/`get_params`、`Artful::artful`/`shortcut`、`Shortcut::get_plugins`、`filter_params`、`Event::ArtfulStart.params` 六类公开 API；删除 `From<HashMap> for Rocket`；`JsonPacker` 输出键序由随机变字典序；packer 定位收窄为「请求级配置：链早期设定一次，不承诺链中途替换」；新增 `serde` 正依赖（无 derive），迁移 recipe 详见 [artisan-http/CHANGELOG.md](./artisan-http/CHANGELOG.md)
+
 ## [0.17.0] - 2026-09-01
 
 ### Added

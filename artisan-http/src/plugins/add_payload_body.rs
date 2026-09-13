@@ -10,7 +10,7 @@
 //! - 请求头缺失 `Content-Type` 时，按 packer 声明的 [`Packer::content_type`] 补填（不覆盖用户显式设置）
 
 use async_trait::async_trait;
-use std::collections::HashMap;
+use serde_json::Map;
 
 use crate::Rocket;
 use crate::flow_ctrl::Next;
@@ -31,7 +31,7 @@ impl Plugin for AddPayloadBodyPlugin {
             // 剔除 `_` 前缀控制参数与 null 值后再序列化，避免 `_unpack_raw` 等
             // 内部参数进入发往网关的请求体（部分网关对全字段验签）
             let filtered = crate::filter_params(&rocket.payload);
-            rocket.config.body = Some(rocket.packer.pack(&filtered, &HashMap::new())?);
+            rocket.config.body = Some(rocket.packer.pack(&filtered, &Map::new())?);
 
             // 判重按头名不区分大小写，用户以任意大小写键显式设置的值都不覆盖
             if let Some(ct) = rocket.packer.content_type() {
@@ -53,8 +53,8 @@ mod tests {
     use super::*;
     use crate::flow_ctrl::FlowCtrl;
     use crate::packer::Packer;
+    use serde_json::Map;
     use serde_json::{Value, json};
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     async fn drive(rocket: &mut Rocket) -> crate::Result<()> {
@@ -64,7 +64,7 @@ mod tests {
 
     #[tokio::test]
     async fn packs_payload_and_sets_content_type() {
-        let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+        let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
         let mut rocket = Rocket::new(params);
         rocket.merge_params_to_payload();
 
@@ -82,7 +82,7 @@ mod tests {
     #[tokio::test]
     async fn skips_when_body_preset() {
         // config.body 已预设:不打包、不补 CT
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.payload.insert("order_id".to_string(), json!("123"));
         rocket.set_body("preset body");
 
@@ -94,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_when_payload_empty() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         drive(&mut rocket).await.unwrap();
 
@@ -106,7 +106,7 @@ mod tests {
     async fn filters_underscore_keys_and_nulls_from_body() {
         // `filter_params` 剔除 `_` 前缀控制参数与 null 值：
         // 如 `_unpack_raw` 只影响本侧解包，不能随报文发给网关
-        let params = HashMap::from([
+        let params = Map::from_iter([
             ("_unpack_raw".to_string(), json!(true)),
             ("_secret".to_string(), json!("x")),
             ("null_field".to_string(), json!(null)),
@@ -125,7 +125,7 @@ mod tests {
     #[tokio::test]
     async fn respects_explicit_content_type_case_insensitive() {
         // 用户以小写键显式设置 CT:不应被覆盖为 application/json
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.payload.insert("order_id".to_string(), json!("123"));
         rocket.add_header("content-type", "application/custom");
 
@@ -147,22 +147,18 @@ mod tests {
         impl Packer for NullContentTypePacker {
             fn pack(
                 &self,
-                data: &HashMap<String, Value>,
-                _params: &HashMap<String, Value>,
+                data: &Map<String, Value>,
+                _params: &Map<String, Value>,
             ) -> crate::Result<String> {
                 Ok(format!("packed:{}", data.len()))
             }
 
-            fn unpack(
-                &self,
-                _data: &str,
-                _params: &HashMap<String, Value>,
-            ) -> crate::Result<Value> {
+            fn unpack(&self, _data: &str, _params: &Map<String, Value>) -> crate::Result<Value> {
                 Ok(Value::Null)
             }
         }
 
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.payload.insert("order_id".to_string(), json!("123"));
         rocket.packer = Arc::new(NullContentTypePacker);
 
@@ -180,22 +176,18 @@ mod tests {
         impl Packer for FailingPacker {
             fn pack(
                 &self,
-                _data: &HashMap<String, Value>,
-                _params: &HashMap<String, Value>,
+                _data: &Map<String, Value>,
+                _params: &Map<String, Value>,
             ) -> crate::Result<String> {
                 Err(crate::error::ArtfulError::Other("pack failed".to_string()))
             }
 
-            fn unpack(
-                &self,
-                _data: &str,
-                _params: &HashMap<String, Value>,
-            ) -> crate::Result<Value> {
+            fn unpack(&self, _data: &str, _params: &Map<String, Value>) -> crate::Result<Value> {
                 Ok(Value::Null)
             }
         }
 
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.payload.insert("order_id".to_string(), json!("123"));
         rocket.packer = Arc::new(FailingPacker);
 

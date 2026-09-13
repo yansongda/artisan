@@ -11,6 +11,7 @@
 //! - [`Artful::builder`] - 链式构建器入口（config / customize / client / event_listener
 //!   可选叠加，build 时按优先级构建；事件监听器为追加式注册）
 //! - [`Artful::artful`] - 执行完整插件链
+//! - [`Artful::artful_as`] - 执行完整插件链并强类型反序列化结果
 //! - [`Artful::shortcut`] - 使用 Shortcut 快捷方式
 //! - [`Artful::raw`] - 直接 HTTP 请求（跳过插件）
 //!
@@ -22,11 +23,11 @@
 //! HTTP 生命周期事件（HttpStart/HttpEnd/HttpError）由框架内置链尾核心动作
 //! `IgniteCore` 分发，`artful()` 自动挂载，无需用户插件。
 
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::config::Config;
@@ -160,7 +161,7 @@ impl Artful {
     /// - 响应解析失败
     pub async fn artful(
         &self,
-        params: HashMap<String, Value>,
+        params: Map<String, Value>,
         plugins: Vec<Arc<dyn Plugin>>,
     ) -> Result<Destination> {
         let mut rocket = Rocket::new(params);
@@ -191,6 +192,30 @@ impl Artful {
         Ok(rocket.destination.unwrap_or_default())
     }
 
+    /// 执行插件链并强类型反序列化结果
+    ///
+    /// 等价于 [`Artful::artful`] 后经 [`Destination::into_json`] 取出 JSON
+    /// 并反序列化为 `T`，适用于方向固定为 `Json` 的强类型调用方。
+    ///
+    /// # Errors
+    ///
+    /// 返回错误当：
+    /// - [`Artful::artful`] 失败
+    /// - destination 不是 JSON（[`ArtfulError::DestinationMismatch`]）
+    /// - 反序列化失败（[`ArtfulError::JsonDeserializeError`]）
+    pub async fn artful_as<T: DeserializeOwned>(
+        &self,
+        params: Map<String, Value>,
+        plugins: Vec<Arc<dyn Plugin>>,
+    ) -> Result<T> {
+        let destination = self.artful(params, plugins).await?;
+        let value = destination.into_json()?;
+        serde_json::from_value(value).map_err(|e| ArtfulError::JsonDeserializeError {
+            message: format!("cannot deserialize into {}", std::any::type_name::<T>()),
+            source: Some(e),
+        })
+    }
+
     /// 使用 Shortcut 快捷方式
     ///
     /// # 参数
@@ -207,7 +232,7 @@ impl Artful {
     pub async fn shortcut<S: Shortcut>(
         &self,
         shortcut: S,
-        params: HashMap<String, Value>,
+        params: Map<String, Value>,
     ) -> Result<Destination> {
         let plugins = shortcut.get_plugins(&params);
         self.artful(params, plugins).await
@@ -387,7 +412,7 @@ mod tests {
         // 同模块测试可写私有字段：注入带监听器的分发器
         artful.events = Arc::new(events);
 
-        let result = artful.artful(HashMap::new(), vec![]).await;
+        let result = artful.artful(Map::new(), vec![]).await;
 
         assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
         assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "HttpStart"]);
@@ -415,12 +440,40 @@ mod tests {
         artful.events = Arc::new(events);
 
         let destination = artful
-            .artful(HashMap::new(), vec![Arc::new(SetNoRequestPlugin)])
+            .artful(Map::new(), vec![Arc::new(SetNoRequestPlugin)])
             .await
             .unwrap();
 
         assert!(matches!(destination, Destination::None));
         assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);
+    }
+
+    #[tokio::test]
+    async fn artful_as_no_request_returns_destination_mismatch() {
+        // NoRequest 方向：destination 为 None → into_json 报 DestinationMismatch
+        struct SetNoRequestPlugin;
+
+        #[async_trait]
+        impl Plugin for SetNoRequestPlugin {
+            async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
+                rocket.config.direction = DirectionKind::NoRequest;
+                next.call(rocket).await
+            }
+        }
+
+        let artful = Artful::new().unwrap();
+        let err = artful
+            .artful_as::<serde_json::Value>(Map::new(), vec![Arc::new(SetNoRequestPlugin)])
+            .await
+            .unwrap_err();
+
+        match err {
+            ArtfulError::DestinationMismatch { expected, actual } => {
+                assert_eq!(expected, "Json");
+                assert_eq!(actual, "None");
+            }
+            other => panic!("expected DestinationMismatch, got {other:?}"),
+        }
     }
 
     #[test]

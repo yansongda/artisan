@@ -3,8 +3,7 @@
 use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
 /// 设置 HTTP 方法和 URL 的插件
@@ -24,7 +23,7 @@ impl Plugin for MethodUrlPlugin {
 
 #[tokio::main]
 async fn main() -> artisan_http::Result<()> {
-    let mut params = HashMap::new();
+    let mut params: Map<String, Value> = Map::new();
     params.insert("order_id".to_string(), json!("123"));
     params.insert("amount".to_string(), json!(100));
 
