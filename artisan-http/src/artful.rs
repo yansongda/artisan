@@ -11,6 +11,7 @@
 //! - [`Artful::builder`] - 链式构建器入口（config / customize / client / event_listener
 //!   可选叠加，build 时按优先级构建；事件监听器为追加式注册）
 //! - [`Artful::artful`] - 执行完整插件链
+//! - [`Artful::artful_as`] - 执行完整插件链并强类型反序列化结果
 //! - [`Artful::shortcut`] - 使用 Shortcut 快捷方式
 //! - [`Artful::raw`] - 直接 HTTP 请求（跳过插件）
 //!
@@ -25,6 +26,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::Result;
@@ -188,6 +190,30 @@ impl Artful {
         })?;
 
         Ok(rocket.destination.unwrap_or_default())
+    }
+
+    /// 执行插件链并强类型反序列化结果
+    ///
+    /// 等价于 [`Artful::artful`] 后经 [`Destination::into_json`] 取出 JSON
+    /// 并反序列化为 `T`，适用于方向固定为 `Json` 的强类型调用方。
+    ///
+    /// # Errors
+    ///
+    /// 返回错误当：
+    /// - [`Artful::artful`] 失败
+    /// - destination 不是 JSON（[`ArtfulError::DestinationMismatch`]）
+    /// - 反序列化失败（[`ArtfulError::JsonDeserializeError`]）
+    pub async fn artful_as<T: DeserializeOwned>(
+        &self,
+        params: Map<String, Value>,
+        plugins: Vec<Arc<dyn Plugin>>,
+    ) -> Result<T> {
+        let destination = self.artful(params, plugins).await?;
+        let value = destination.into_json()?;
+        serde_json::from_value(value).map_err(|e| ArtfulError::JsonDeserializeError {
+            message: format!("cannot deserialize into {}", std::any::type_name::<T>()),
+            source: Some(e),
+        })
     }
 
     /// 使用 Shortcut 快捷方式
@@ -420,6 +446,34 @@ mod tests {
 
         assert!(matches!(destination, Destination::None));
         assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);
+    }
+
+    #[tokio::test]
+    async fn artful_as_no_request_returns_destination_mismatch() {
+        // NoRequest 方向：destination 为 None → into_json 报 DestinationMismatch
+        struct SetNoRequestPlugin;
+
+        #[async_trait]
+        impl Plugin for SetNoRequestPlugin {
+            async fn assembly(&self, rocket: &mut Rocket, next: Next<'_>) -> crate::Result<()> {
+                rocket.config.direction = DirectionKind::NoRequest;
+                next.call(rocket).await
+            }
+        }
+
+        let artful = Artful::new().unwrap();
+        let err = artful
+            .artful_as::<serde_json::Value>(Map::new(), vec![Arc::new(SetNoRequestPlugin)])
+            .await
+            .unwrap_err();
+
+        match err {
+            ArtfulError::DestinationMismatch { expected, actual } => {
+                assert_eq!(expected, "Json");
+                assert_eq!(actual, "None");
+            }
+            other => panic!("expected DestinationMismatch, got {other:?}"),
+        }
     }
 
     #[test]

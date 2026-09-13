@@ -17,6 +17,8 @@
 
 use std::sync::Arc;
 
+use crate::error::ArtfulError;
+
 /// 响应解析器 trait
 #[async_trait::async_trait]
 pub trait Direction: Send + Sync + std::fmt::Debug {
@@ -82,6 +84,28 @@ impl From<serde_json::Value> for Destination {
     }
 }
 
+impl Destination {
+    /// 取出 JSON 解析结果
+    ///
+    /// # Errors
+    ///
+    /// 返回 [`ArtfulError::DestinationMismatch`] 当目标不是 JSON 解析结果
+    /// （`actual` 为变体名 `Response` / `None`）。
+    pub fn into_json(self) -> crate::Result<serde_json::Value> {
+        match self {
+            Destination::Json(v) => Ok(v),
+            Destination::Response(_) => Err(ArtfulError::DestinationMismatch {
+                expected: "Json",
+                actual: "Response".to_string(),
+            }),
+            Destination::None => Err(ArtfulError::DestinationMismatch {
+                expected: "Json",
+                actual: "None".to_string(),
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +129,41 @@ mod tests {
         let value = json!({"key": "value"});
         let dest: Destination = value.into();
         assert!(matches!(dest, Destination::Json(_)));
+    }
+
+    #[test]
+    fn test_destination_into_json_ok() {
+        // Json → Ok(value)
+        let dest = Destination::Json(json!({"key": "value"}));
+        assert_eq!(dest.into_json().unwrap(), json!({"key": "value"}));
+    }
+
+    #[test]
+    fn test_destination_into_json_response_mismatch() {
+        // Response → DestinationMismatch，actual 为变体名（非 Display 文案）
+        let dest = Destination::Response(sample_response());
+        let err = dest.into_json().unwrap_err();
+        match err {
+            ArtfulError::DestinationMismatch { expected, actual } => {
+                assert_eq!(expected, "Json");
+                assert_eq!(actual, "Response");
+            }
+            other => panic!("expected DestinationMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_destination_into_json_none_mismatch() {
+        // None → DestinationMismatch，actual 为变体名
+        let dest = Destination::None;
+        let err = dest.into_json().unwrap_err();
+        match err {
+            ArtfulError::DestinationMismatch { expected, actual } => {
+                assert_eq!(expected, "Json");
+                assert_eq!(actual, "None");
+            }
+            other => panic!("expected DestinationMismatch, got {other:?}"),
+        }
     }
 
     fn sample_response() -> reqwest::Response {

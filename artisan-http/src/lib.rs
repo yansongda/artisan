@@ -81,7 +81,7 @@ pub use direction::{Destination, Direction, DirectionKind};
 pub use error::{ArtfulError, Result};
 pub use event::{Event, EventDispatcher, EventListener};
 pub use flow_ctrl::{FlowCtrl, Next};
-pub use packer::Packer;
+pub use packer::{Packer, pack_typed, unpack_typed};
 pub use packers::{JsonPacker, QueryPacker, XmlPacker};
 pub use plugin::Plugin;
 pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
