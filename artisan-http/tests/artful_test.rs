@@ -1,11 +1,10 @@
 use artisan_http::FlowCtrl;
 use artisan_http::Rocket;
 use artisan_http::direction::{Destination, DirectionKind};
-use artisan_http::plugins::{AddRadarPlugin, ParserPlugin, StartPlugin};
+use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, ClientOptions, Config, Plugin, flow_ctrl::Next};
 use async_trait::async_trait;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{Map, json};
 use std::sync::Arc;
 use std::time::Duration;
 use wiremock::matchers::{header, method, path};
@@ -58,7 +57,7 @@ async fn test_artisan_basic() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     let json = expect_json(result);
     assert_eq!(json["code"], 0);
@@ -96,7 +95,7 @@ async fn test_artisan_with_response_direction() {
     let artful = Artful::new().unwrap();
     let result = artful
         .artful(
-            HashMap::new(),
+            Map::new(),
             vec![
                 Arc::new(ConfigPlugin {
                     method: reqwest::Method::GET,
@@ -156,7 +155,7 @@ async fn test_artful_with_client_takes_effect() {
         Arc::new(AddRadarPlugin),
         Arc::new(ParserPlugin),
     ];
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     let json = expect_json(result);
     assert_eq!(json["ok"], true);
@@ -254,7 +253,7 @@ async fn test_plugin_error_propagation() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(result.is_err());
     let error = result.unwrap_err();
@@ -301,7 +300,7 @@ async fn test_plugin_chain_stops_on_error() {
         Arc::new(ParserPlugin),
     ];
 
-    let mut rocket = Rocket::new(HashMap::new());
+    let mut rocket = Rocket::new(Map::new());
     let mut ctrl = FlowCtrl::new(plugins);
 
     let result = ctrl.call_next(&mut rocket).await;
@@ -338,7 +337,7 @@ async fn test_http_404_response() {
 
     // 404 不会返回错误，而是正常解析响应
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     let json = expect_json(result);
     assert_eq!(json["error"], "Not Found");
@@ -370,7 +369,7 @@ async fn test_http_500_response() {
 
     // 500 不会返回错误，而是正常解析响应
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     let json = expect_json(result);
     assert_eq!(json["error"], "Internal Server Error");
@@ -415,7 +414,7 @@ async fn test_http_timeout_response() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     // 请求应该超时失败
     assert!(result.is_err());
@@ -437,7 +436,7 @@ async fn test_http_invalid_url() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(result.is_err());
 }
@@ -455,7 +454,7 @@ async fn test_http_nonexistent_host() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(result.is_err());
 }
@@ -496,7 +495,7 @@ async fn with_client_builder_applies_config_http() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
 }
@@ -534,7 +533,7 @@ async fn with_client_builder_customization_overrides() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     assert!(matches!(result, artisan_http::Destination::Json(_)));
 }
@@ -580,7 +579,7 @@ async fn builder_config_and_customize_takes_effect() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     assert!(matches!(result, artisan_http::Destination::Json(_)));
 }
@@ -628,7 +627,7 @@ async fn builder_client_injection_takes_effect() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     assert!(matches!(result, artisan_http::Destination::Json(_)));
 }
@@ -656,7 +655,58 @@ async fn builder_default_build_succeeds() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     assert!(matches!(result, artisan_http::Destination::Json(_)));
+}
+
+// ============ Artful::artful_as 端到端（强类型反序列化） ============
+
+/// artful_as 端到端用例的响应结构体（serde derive 来自 dev-dependencies）
+#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+struct OrderResp {
+    code: i32,
+    order_id: String,
+    amount: u64,
+}
+
+#[tokio::test]
+async fn artful_as_deserializes_typed_response() {
+    let mock_server = MockServer::start().await;
+
+    // mock 返回 JSON 响应 → ParserPlugin 解包 → artful_as 反序列化为结构体
+    Mock::given(method("POST"))
+        .and(path("/orders/typed"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "order_id": "20260913001", "amount": 100})),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let params = Map::from_iter([("order_id".to_string(), json!("20260913001"))]);
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(StartPlugin),
+        Arc::new(MethodUrlPlugin {
+            method: reqwest::Method::POST,
+            url: mock_server.uri() + "/orders/typed",
+        }),
+        Arc::new(AddPayloadBodyPlugin),
+        Arc::new(AddRadarPlugin),
+        Arc::new(ParserPlugin),
+    ];
+
+    let artful = Artful::new().unwrap();
+    let resp: OrderResp = artful.artful_as(params, plugins).await.unwrap();
+
+    // 断言返回结构体字段正确
+    assert_eq!(
+        resp,
+        OrderResp {
+            code: 0,
+            order_id: "20260913001".to_string(),
+            amount: 100,
+        }
+    );
 }

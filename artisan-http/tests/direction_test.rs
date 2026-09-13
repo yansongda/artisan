@@ -3,8 +3,7 @@ use artisan_http::direction::{Destination, Direction, DirectionKind};
 use artisan_http::plugins::{AddRadarPlugin, ParserPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, flow_ctrl::Next};
 use async_trait::async_trait;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{Map, json};
 use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -105,7 +104,7 @@ async fn custom_direction_executes_in_chain() {
     let artful = Artful::new().unwrap();
     let result = artful
         .artful(
-            HashMap::new(),
+            Map::new(),
             vec![
                 Arc::new(ConfigPlugin {
                     method: reqwest::Method::GET,
@@ -143,7 +142,7 @@ async fn custom_direction_error_propagates() {
     let artful = Artful::new().unwrap();
     let result = artful
         .artful(
-            HashMap::new(),
+            Map::new(),
             vec![
                 Arc::new(ConfigPlugin {
                     method: reqwest::Method::GET,
@@ -202,7 +201,7 @@ async fn no_request_skips_http_and_keeps_chain() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     // artful() 返回 rocket.destination.unwrap_or_default()，NoRequest 时应为 Destination::None
     assert!(matches!(result, Destination::None));
@@ -235,7 +234,7 @@ async fn response_direction_consumes_origin() {
     let artful = Artful::new().unwrap();
     let result = artful
         .artful(
-            HashMap::new(),
+            Map::new(),
             vec![
                 Arc::new(ConfigPlugin {
                     method: reqwest::Method::GET,
