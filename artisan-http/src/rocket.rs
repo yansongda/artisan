@@ -16,7 +16,7 @@
 //! - `payload`: 业务参数，由 `StartPlugin` 从 params 初始化，后续插件可修改
 //! - `RocketConfig` 所有字段可在 plugin 中动态修改
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -93,10 +93,10 @@ pub struct RequestOptions {
 /// 插件通过修改 `payload`、`config` 等字段来组装请求。
 pub struct Rocket {
     /// 原始参数（不变）
-    params: HashMap<String, Value>,
+    params: Map<String, Value>,
 
     /// 业务参数（可修改）
-    pub payload: HashMap<String, Value>,
+    pub payload: Map<String, Value>,
 
     /// Rocket 配置（可修改）
     pub config: RocketConfig,
@@ -138,10 +138,10 @@ impl Rocket {
     /// params 存储原始参数，payload 初始为空（由 `StartPlugin` 初始化）
     /// config 使用默认值，由插件负责设置 method、url 等
     #[must_use]
-    pub fn new(params: HashMap<String, Value>) -> Self {
+    pub fn new(params: Map<String, Value>) -> Self {
         Self {
             params,
-            payload: HashMap::new(),
+            payload: Map::new(),
             config: RocketConfig::default(),
             client: crate::http::default_client().clone(),
             radar: None,
@@ -153,7 +153,7 @@ impl Rocket {
     }
 
     /// 获取原始参数（不变）
-    pub fn get_params(&self) -> &HashMap<String, Value> {
+    pub fn get_params(&self) -> &Map<String, Value> {
         &self.params
     }
 
@@ -200,12 +200,6 @@ impl Rocket {
     }
 }
 
-impl From<HashMap<String, Value>> for Rocket {
-    fn from(params: HashMap<String, Value>) -> Self {
-        Self::new(params)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_rocket_new() {
-        let mut params = HashMap::new();
+        let mut params = Map::new();
         params.insert("key".to_string(), json!("value"));
 
         let rocket = Rocket::new(params);
@@ -260,18 +254,8 @@ mod tests {
     }
 
     #[test]
-    fn test_rocket_from_hashmap() {
-        let mut params = HashMap::new();
-        params.insert("test".to_string(), json!("data"));
-
-        let rocket: Rocket = params.clone().into();
-        let retrieved = rocket.get_params();
-        assert_eq!(retrieved.get("test"), Some(&json!("data")));
-    }
-
-    #[test]
     fn test_rocket_merge_params_to_payload() {
-        let mut params = HashMap::new();
+        let mut params = Map::new();
         params.insert("merged".to_string(), json!("value"));
 
         let mut rocket = Rocket::new(params);
@@ -284,21 +268,21 @@ mod tests {
 
     #[test]
     fn test_rocket_set_method() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.set_method(reqwest::Method::GET);
         assert_eq!(rocket.config.method, reqwest::Method::GET);
     }
 
     #[test]
     fn test_rocket_set_url() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.set_url("https://example.com/api");
         assert_eq!(rocket.config.url, "https://example.com/api");
     }
 
     #[test]
     fn test_rocket_add_header() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.add_header("Content-Type", "application/json");
         rocket.add_header("Authorization", "Bearer token");
 
@@ -314,21 +298,21 @@ mod tests {
 
     #[test]
     fn test_rocket_set_body() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.set_body("{\"data\": \"test\"}");
         assert_eq!(rocket.config.body, Some("{\"data\": \"test\"}".to_string()));
     }
 
     #[test]
     fn test_rocket_set_timeout() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.set_timeout(60);
         assert_eq!(rocket.config.http.timeout, Some(60));
     }
 
     #[test]
     fn test_rocket_get_params() {
-        let mut params = HashMap::new();
+        let mut params = Map::new();
         params.insert("key1".to_string(), json!("value1"));
         params.insert("key2".to_string(), json!(123));
 
@@ -342,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_rocket_debug() {
-        let mut params = HashMap::new();
+        let mut params = Map::new();
         params.insert("test".to_string(), json!("value"));
 
         let rocket = Rocket::new(params);
@@ -355,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_rocket_convenience_methods_chained() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         rocket.set_method(reqwest::Method::PUT);
         rocket.set_url("https://api.example.com/resource");
@@ -373,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_rocket_add_header_overwrite() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         rocket.add_header("X-Test", "first-value");
         assert_eq!(
@@ -390,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_rocket_set_body_overwrite() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         rocket.set_body("first body");
         assert_eq!(rocket.config.body, Some("first body".to_string()));
@@ -428,13 +412,13 @@ mod tests {
     #[test]
     fn test_rocket_events_default_none() {
         // Rocket::new 默认不注入事件分发器
-        let rocket = Rocket::new(HashMap::new());
+        let rocket = Rocket::new(Map::new());
         assert!(rocket.events.is_none());
     }
 
     #[test]
     fn test_rocket_has_header_case_insensitive() {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.add_header("Content-Type", "application/json");
 
         assert!(rocket.has_header("Content-Type"));
@@ -445,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_rocket_has_header_empty() {
-        let rocket = Rocket::new(HashMap::new());
+        let rocket = Rocket::new(Map::new());
         assert!(!rocket.has_header("Content-Type"));
     }
 }

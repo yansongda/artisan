@@ -53,10 +53,9 @@
 //! assert!(!dispatcher.is_empty());
 //! ```
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::error::ArtfulError;
@@ -71,7 +70,7 @@ pub enum Event<'a> {
     /// 插件链启动前（只读观测：params 已装入 rocket，plugins 未执行）
     ArtfulStart {
         /// 原始请求参数
-        params: &'a HashMap<String, Value>,
+        params: &'a Map<String, Value>,
         /// 即将执行的插件链
         plugins: &'a [Arc<dyn Plugin>],
     },
@@ -284,7 +283,7 @@ mod tests {
     #[test]
     fn empty_dispatcher_dispatch_is_noop() {
         // 空注册表：dispatch 为 no-op，返回 Ok
-        let rocket = Rocket::new(HashMap::new());
+        let rocket = Rocket::new(Map::new());
         let dispatcher = EventDispatcher::default();
 
         let result = dispatcher.dispatch(Event::HttpEnd { rocket: &rocket });
@@ -301,7 +300,7 @@ mod tests {
         dispatcher.add_listener(Arc::new(Recorder::new("First", records.clone(), false)));
         dispatcher.add_listener(Arc::new(Recorder::new("Second", records.clone(), false)));
 
-        let rocket = Rocket::new(HashMap::new());
+        let rocket = Rocket::new(Map::new());
         dispatcher
             .dispatch(Event::HttpEnd { rocket: &rocket })
             .unwrap();
@@ -317,7 +316,7 @@ mod tests {
         dispatcher.add_listener(Arc::new(Recorder::new("Failing", records.clone(), true)));
         dispatcher.add_listener(Arc::new(Recorder::new("Second", records.clone(), false)));
 
-        let rocket = Rocket::new(HashMap::new());
+        let rocket = Rocket::new(Map::new());
         let result = dispatcher.dispatch(Event::HttpEnd { rocket: &rocket });
 
         match result.unwrap_err() {
@@ -340,11 +339,11 @@ mod tests {
     #[test]
     fn event_debug_impl() {
         // Event 实现 Debug：含 &mut Rocket 变体也可打印（plugins 仅打印数量）
-        let rocket = Rocket::new(HashMap::new());
+        let rocket = Rocket::new(Map::new());
         let event = Event::HttpEnd { rocket: &rocket };
         assert!(format!("{event:?}").starts_with("HttpEnd"));
 
-        let params = HashMap::new();
+        let params = Map::new();
         let plugins: Vec<Arc<dyn Plugin>> = vec![];
         let event = Event::ArtfulStart {
             params: &params,

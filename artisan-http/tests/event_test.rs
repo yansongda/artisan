@@ -9,8 +9,7 @@ use artisan_http::event::{Event, EventListener};
 use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{Map, json};
 use std::sync::{Arc, Mutex};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -196,7 +195,7 @@ async fn success_path_event_sequence() {
     let (records, recorder) = recorder_records();
     let artful = artful_with_listeners(vec![recorder]);
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
     let result = artful
         .artful(
             params,
@@ -228,7 +227,7 @@ async fn http_error_fires_http_error() {
     let artful = artful_with_listeners(vec![recorder]);
 
     let result = artful
-        .artful(HashMap::new(), plugin_chain(reqwest::Method::POST, url))
+        .artful(Map::new(), plugin_chain(reqwest::Method::POST, url))
         .await;
 
     assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
@@ -251,7 +250,7 @@ async fn no_request_direction_no_http_events() {
     // SetNoRequestPlugin 置于链尾核心动作之前即可（此处放在 StartPlugin 之后）
     plugins.insert(1, Arc::new(SetNoRequestPlugin));
 
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     assert!(matches!(result, Destination::None));
     assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "ArtfulEnd"]);
@@ -271,7 +270,7 @@ async fn http_start_mutation_via_radar_reaches_server() {
 
     let artful = artful_with_listeners(vec![Arc::new(HeaderInserterListener)]);
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
     let result = artful
         .artful(
             params,
@@ -298,7 +297,7 @@ async fn artful_end_can_rewrite_destination() {
 
     let artful = artful_with_listeners(vec![Arc::new(DestinationRewriterListener)]);
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
     let result = artful
         .artful(
             params,
@@ -326,7 +325,7 @@ async fn listener_error_aborts_and_propagates() {
 
     let artful = artful_with_listeners(vec![Arc::new(FailingListener)]);
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
     let result = artful
         .artful(
             params,
@@ -360,7 +359,7 @@ async fn http_error_listener_failure_preserves_original_error() {
     let artful = artful_with_listeners(vec![Arc::new(HttpErrorFailingListener)]);
 
     let result = artful
-        .artful(HashMap::new(), plugin_chain(reqwest::Method::POST, url))
+        .artful(Map::new(), plugin_chain(reqwest::Method::POST, url))
         .await;
 
     match result.unwrap_err() {
@@ -386,7 +385,7 @@ async fn empty_chain_dispatches_http_start_and_fails_fast() {
     let (records, recorder) = recorder_records();
     let artful = artful_with_listeners(vec![recorder]);
 
-    let result = artful.artful(HashMap::new(), vec![]).await;
+    let result = artful.artful(Map::new(), vec![]).await;
 
     assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
     assert_eq!(*records.lock().unwrap(), vec!["ArtfulStart", "HttpStart"]);
@@ -402,7 +401,7 @@ async fn no_request_plugin_returns_none() {
 
     let result = artful
         .artful(
-            HashMap::new(),
+            Map::new(),
             vec![Arc::new(SetNoRequestPlugin), Arc::new(ParserPlugin)],
         )
         .await
@@ -421,7 +420,7 @@ async fn plugin_not_calling_next_skips_http_events() {
 
     let result = artful
         .artful(
-            HashMap::new(),
+            Map::new(),
             vec![Arc::new(ShortCircuitOkPlugin), Arc::new(ParserPlugin)],
         )
         .await

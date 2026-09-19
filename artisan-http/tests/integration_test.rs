@@ -4,8 +4,7 @@ use artisan_http::{
     Artful, ArtfulError, ClientOptions, Config, Packer, Plugin, Rocket, flow_ctrl::Next,
 };
 use async_trait::async_trait;
-use serde_json::{Value, json};
-use std::collections::HashMap;
+use serde_json::{Map, Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 use wiremock::matchers::{body_string_contains, header, method, path};
@@ -57,7 +56,7 @@ async fn test_full_pipeline() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     let json = expect_json(result);
     assert_eq!(json["code"], 0);
@@ -77,7 +76,7 @@ async fn test_pipeline_with_payload() {
         .mount(&mock_server)
         .await;
 
-    let params = HashMap::from([
+    let params = Map::from_iter([
         ("order_id".to_string(), json!("123")),
         ("amount".to_string(), json!(100)),
     ]);
@@ -115,7 +114,7 @@ async fn default_chain_sets_content_type() {
         .await;
 
     // params 非空：空 payload 不打包、不补 CT
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
@@ -156,7 +155,7 @@ async fn manual_content_type_not_overridden() {
         .mount(&mock_server)
         .await;
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
@@ -183,14 +182,14 @@ struct FormPacker;
 impl Packer for FormPacker {
     fn pack(
         &self,
-        data: &HashMap<String, Value>,
-        _params: &HashMap<String, Value>,
+        data: &Map<String, Value>,
+        _params: &Map<String, Value>,
     ) -> artisan_http::Result<String> {
         let pairs: Vec<String> = data.iter().map(|(k, v)| format!("{k}={v}")).collect();
         Ok(pairs.join("&"))
     }
 
-    fn unpack(&self, data: &str, _params: &HashMap<String, Value>) -> artisan_http::Result<Value> {
+    fn unpack(&self, data: &str, _params: &Map<String, Value>) -> artisan_http::Result<Value> {
         serde_json::from_str(data).map_err(|e| ArtfulError::JsonDeserializeError {
             message: e.to_string(),
             source: Some(e),
@@ -202,6 +201,7 @@ impl Packer for FormPacker {
     }
 }
 
+/// 请求链早期设定 packer 的插件（链启动阶段一次性设定，对齐 PHP setPacker 形态）
 struct ReplacePackerPlugin;
 
 #[async_trait]
@@ -224,7 +224,7 @@ async fn custom_packer_content_type() {
         .mount(&mock_server)
         .await;
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
@@ -280,7 +280,7 @@ async fn client_timeout_takes_effect() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
 }
@@ -320,7 +320,7 @@ async fn lowercase_content_type_not_duplicated() {
         .mount(&mock_server)
         .await;
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
@@ -385,7 +385,7 @@ async fn request_timeout_overrides_client_timeout() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     // 请求级 timeout=1s 覆盖 client 级 5s：若覆盖语义失效，请求 2s 后成功、断言失败
     assert!(matches!(result.unwrap_err(), ArtfulError::RequestFailed(_)));
@@ -400,7 +400,7 @@ async fn missing_request_when_no_radar_plugin() {
     let plugins: Vec<Arc<dyn Plugin>> = vec![];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(matches!(result.unwrap_err(), ArtfulError::MissingRequest));
 }
@@ -427,7 +427,7 @@ async fn invalid_json_response_errors() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(matches!(
         result.unwrap_err(),
@@ -461,7 +461,7 @@ async fn default_user_agent_sent() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     assert_eq!(expect_json(result)["ok"], true);
 }
@@ -492,7 +492,7 @@ async fn preset_body_not_overridden() {
         }
     }
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
@@ -545,7 +545,7 @@ async fn empty_payload_no_content_type() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     assert_eq!(expect_json(result)["ok"], true);
 }
@@ -583,7 +583,7 @@ async fn start_plugin_keeps_existing_payload() {
         }
     }
 
-    let params = HashMap::from([("outer".to_string(), json!("param"))]);
+    let params = Map::from_iter([("outer".to_string(), json!("param"))]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(PreFillPlugin),
@@ -630,7 +630,7 @@ async fn custom_headers_forwarded() {
         }
     }
 
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),

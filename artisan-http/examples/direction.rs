@@ -6,7 +6,7 @@
 use artisan_http::plugins::{AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, Plugin, Rocket, direction::DirectionKind, flow_ctrl::Next};
 use async_trait::async_trait;
-use std::collections::HashMap;
+use serde_json::Map;
 use std::sync::Arc;
 
 /// 设置 HTTP 方法和 URL 的插件
@@ -52,7 +52,7 @@ async fn main() -> artisan_http::Result<()> {
 
     let artful = Artful::new()?;
 
-    let result = artful.artful(HashMap::new(), plugins).await?;
+    let result = artful.artful(Map::new(), plugins).await?;
 
     if let artisan_http::Destination::Json(json) = result {
         println!("JSON Response: {}", json);
@@ -73,7 +73,7 @@ async fn main() -> artisan_http::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await?;
+    let result = artful.artful(Map::new(), plugins).await?;
 
     if let artisan_http::Destination::Response(response) = result {
         println!("Response status: {}", response.status());
@@ -95,7 +95,7 @@ async fn main() -> artisan_http::Result<()> {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await?;
+    let result = artful.artful(Map::new(), plugins).await?;
 
     if let artisan_http::Destination::None = result {
         println!("NoRequestDirection: 未发起 HTTP 请求，destination 透传为 None");

@@ -11,8 +11,7 @@ use artisan_http::packers::{QueryPacker, XmlPacker};
 use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, Rocket, flow_ctrl::Next};
 use async_trait::async_trait;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{Map, json};
 use std::sync::{Arc, Mutex};
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -60,7 +59,10 @@ impl Plugin for SetNoRequestPlugin {
     }
 }
 
-/// 链上替换 rocket.packer 的插件（packer 经构造参数注入）
+/// 请求链早期设定 packer 的插件（packer 经构造参数注入）
+///
+/// 对齐 PHP setPacker 形态：pay 32 处调用均为链启动阶段一次性设定，
+/// 故置于链首（StartPlugin 之后、任何消费 packer 的插件之前）。
 struct ReplacePackerPlugin(Arc<dyn Packer>);
 
 #[async_trait]
@@ -162,7 +164,7 @@ async fn chain_without_parser_plugin_returns_none_but_sends_request() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     // 不报错，返回 Destination::None（rocket.destination.unwrap_or_default() 归一）
     assert!(matches!(result, Destination::None));
@@ -199,7 +201,7 @@ async fn parser_plugin_parses_json_response() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     let json = expect_json(result);
     assert_eq!(json["code"], 0);
@@ -210,8 +212,8 @@ async fn parser_plugin_parses_json_response() {
 
 #[tokio::test]
 async fn parser_plugin_unpacks_xml_via_replaced_packer() {
-    // packer 经链上插件替换为 XmlPacker + wiremock 返回 XML 体 →
-    // ParserPlugin 经 rocket.packer 解包为 XML Object（全链路验证 packer 可替换语义）
+    // packer 经链首插件设定为 XmlPacker + wiremock 返回 XML 体 →
+    // ParserPlugin 经 rocket.packer 解包为 XML Object（全链路验证 packer 链早期设定语义）
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -225,17 +227,17 @@ async fn parser_plugin_unpacks_xml_via_replaced_packer() {
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
+        Arc::new(ReplacePackerPlugin(Arc::new(XmlPacker))),
         Arc::new(MethodUrlPlugin {
             method: reqwest::Method::POST,
             url: mock_server.uri() + "/xml",
         }),
-        Arc::new(ReplacePackerPlugin(Arc::new(XmlPacker))),
         Arc::new(AddRadarPlugin),
         Arc::new(ParserPlugin),
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     // XmlPacker 输出：根元素值即结果（不含根名），叶子文本为字符串
     let json = expect_json(result);
@@ -251,7 +253,7 @@ const QUERY_RAW_RESPONSE: &str = "accessType=0&signPubKeyCert=-----BEGIN CERTIFI
 
 #[tokio::test]
 async fn query_packer_raw_mode_preserves_cert_characters() {
-    // packer 替换为 QueryPacker：请求体按 form-urlencoded 打包（wiremock 断言）、
+    // packer 经链首插件设定为 QueryPacker：请求体按 form-urlencoded 打包（wiremock 断言）、
     // 响应为 query 串；payload 预置 `_unpack_raw: true` 走 raw 模式 →
     // 证书字段逐字符无损（`\r\n`、`+`、`/` 均不被解码破坏）。
     // 另验证 filter_params：`_unpack_raw` 等控制参数不进入请求体
@@ -267,18 +269,18 @@ async fn query_packer_raw_mode_preserves_cert_characters() {
 
     // StartPlugin 将 params 初始化到 payload：`_unpack_raw` 随 payload
     // 全量传给 QueryPacker::unpack（ParserPlugin 不过滤 `_` 前缀特殊参数）
-    let params = HashMap::from([
+    let params = Map::from_iter([
         ("_unpack_raw".to_string(), json!(true)),
         ("biz".to_string(), json!("test")),
     ]);
 
     let plugins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(StartPlugin),
+        Arc::new(ReplacePackerPlugin(Arc::new(QueryPacker))),
         Arc::new(MethodUrlPlugin {
             method: reqwest::Method::POST,
             url: mock_server.uri() + "/query",
         }),
-        Arc::new(ReplacePackerPlugin(Arc::new(QueryPacker))),
         Arc::new(AddPayloadBodyPlugin),
         Arc::new(AddRadarPlugin),
         Arc::new(ParserPlugin),
@@ -332,7 +334,7 @@ async fn response_direction_wraps_origin_response() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     let response = match result {
         Destination::Response(response) => response,
@@ -377,7 +379,7 @@ async fn no_request_with_parser_plugin_sets_none_destination() {
         Arc::new(ParserPlugin),
     ];
 
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     // ArtfulEnd 监听器直接观测 rocket.destination：新语义下为 Some(Destination::None)
     assert_eq!(*observed.lock().unwrap(), Some(true));
@@ -413,7 +415,7 @@ async fn custom_direction_dispatched_through_parser_plugin() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await.unwrap();
+    let result = artful.artful(Map::new(), plugins).await.unwrap();
 
     // 自定义 parse 确实被调用
     assert!(*called.lock().unwrap());
@@ -450,7 +452,7 @@ async fn parser_plugin_rejects_preset_json_destination() {
     ];
 
     let artful = Artful::new().unwrap();
-    let result = artful.artful(HashMap::new(), plugins).await;
+    let result = artful.artful(Map::new(), plugins).await;
 
     assert!(matches!(
         result.unwrap_err(),

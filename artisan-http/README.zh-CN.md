@@ -34,8 +34,7 @@ use artisan_http::{Artful, Plugin, Rocket, flow_ctrl::Next};
 use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::collections::HashMap;
-use serde_json::json;
+use serde_json::{Map, json};
 
 struct MethodUrlPlugin {
     method: reqwest::Method,
@@ -53,7 +52,7 @@ impl Plugin for MethodUrlPlugin {
 
 #[tokio::main]
 async fn main() -> artisan_http::Result<()> {
-    let params = HashMap::from([
+    let params = Map::from_iter([
         ("order_id".to_string(), json!("123")),
         ("amount".to_string(), json!(100)),
     ]);
@@ -86,7 +85,7 @@ async fn main() -> artisan_http::Result<()> {
 use artisan_http::{Artful, Shortcut, Plugin};
 use artisan_http::plugins::{ParserPlugin, StartPlugin, AddPayloadBodyPlugin, AddRadarPlugin};
 use std::sync::Arc;
-use std::collections::HashMap;
+use serde_json::Map;
 
 #[derive(Default)]
 struct MyApiShortcut {
@@ -95,7 +94,7 @@ struct MyApiShortcut {
 }
 
 impl Shortcut for MyApiShortcut {
-    fn get_plugins(&self, _params: &HashMap<String, serde_json::Value>) 
+    fn get_plugins(&self, _params: &Map<String, serde_json::Value>) 
         -> Vec<Arc<dyn Plugin>> 
     {
         vec![
@@ -116,7 +115,7 @@ let shortcut = MyApiShortcut {
     url: "https://api.example.com/orders".to_string(),
 };
 let artful = Artful::new()?;
-let result = artful.shortcut(shortcut, HashMap::new()).await?;
+let result = artful.shortcut(shortcut, Map::new()).await?;
 ```
 
 ### 全局单例（LazyLock）
@@ -251,6 +250,29 @@ let artful = Artful::builder()
 
 试一试：`cargo run -p artisan-http --example event`。
 
+### typed 便利层
+
+0.18.0 在纯 `Value` 流程之上新增 typed 便利层，业务结构体可直接进出：
+
+```rust
+use artisan_http::{Artful, Destination, pack_typed, unpack_typed};
+use serde_json::Map;
+
+// 业务结构体直接序列化为请求体（Packer 层，dyn 兼容）
+let body = pack_typed(packer.as_ref(), &order, &params)?;
+
+// 响应体直接反序列化为业务结构体
+let order: OrderResp = unpack_typed(packer.as_ref(), &body, &params)?;
+
+// Destination → Value（`Json` 方向返回对象；`Response`/`None` 返回 `DestinationMismatch`）
+let value: serde_json::Value = destination.into_json()?;
+
+// 强类型入口：artful() → into_json() → from_value::<T>
+let order: OrderResp = artful.artful_as(params, plugins).await?;
+```
+
+错误处理：`pack_typed` 序列化失败复用 `JsonSerializeError`、输入未序列化为 JSON 对象时复用 `InvalidParameter`；`unpack_typed` 反序列化失败复用 `JsonDeserializeError`（message 注明目标类型）；`into_json` / `artful_as` 遇 `Response`/`None` 方向返回新增的 `DestinationMismatch` 变体。
+
 ## 核心概念
 
 ### Rocket - 请求载体
@@ -259,8 +281,8 @@ let artful = Artful::builder()
 
 ```rust
 pub struct Rocket {
-    params: HashMap<String, Value>,   // 原始参数（不变）
-    pub payload: HashMap<String, Value>, // 业务参数（可修改）
+    params: Map<String, Value>,   // 原始参数（不变）
+    pub payload: Map<String, Value>, // 业务参数（可修改）
     pub config: RocketConfig,         // HTTP 配置（可修改）
     pub radar: Option<Request>,       // HTTP 请求对象
     pub destination: Option<Destination>, // 解析结果
@@ -326,6 +348,40 @@ pub enum DirectionKind {
 > HTTP 执行由框架内置链尾核心动作 `IgniteCore` 自动完成（经 `Artful::artful` / `Artful::shortcut` 自动挂载），响应解析由 `ParserPlugin` 承担：**插件链必须在链尾包含 `ParserPlugin`**——忘挂时请求照常发出但不解析（`rocket.destination` 保持 `None`）。插件链最小形态为 `[StartPlugin, ..., AddRadarPlugin, ParserPlugin]`。
 >
 > **从 0.16.0 迁移**：在插件链末尾追加 `Arc::new(ParserPlugin)` 即可。另注意 `Packer::pack` / `Packer::unpack` 新增 `params: &HashMap<String, Value>` 形参（自定义 `Packer` 实现补一个形参即可，通常忽略），且 `JsonDirection` 改经 `rocket.packer.unpack` 解包响应体（默认路径行为不变；将 `rocket.packer` 替换为 `XmlPacker` 后，响应按 XML 解包）。详见 CHANGELOG 0.17.0 条目。
+
+### 从 0.17.0 迁移
+
+0.18.0 将 payload 数据域从旧 `HashMap` 整体迁移到 `serde_json::Map<String, Value>`（未启用 `preserve_order` 特性时为 BTreeMap 后端，键按字典序排列）。六类公开 API 签名变更，另删除一个 impl：
+
+- `Packer::pack` / `Packer::unpack`：`params` 形参由 `&HashMap` 改为 `&Map<String, Value>`
+- `Rocket::new` / `payload` / `get_params`：由 `HashMap` 改为 `Map<String, Value>`
+- `Artful::artful` / `shortcut`：`params` 改为 `Map<String, Value>`
+- `Shortcut::get_plugins`：形参改为 `&Map<String, Value>`
+- `filter_params`：改为接收 `Map<String, Value>`
+- `Event::ArtfulStart.params`：改为 `&Map<String, Value>`
+- 删除：`From<HashMap> for Rocket`（改用 `Rocket::new(Map::new())` / `Rocket::new(Map::from_iter([...]))` 直接构造）
+
+迁移 recipe：
+
+```rust
+// 旧（0.17.x）
+use std::collections::HashMap;
+let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+let rocket = Rocket::new(params);
+
+// 新（0.18.0）——注意 serde_json::Map 无 From<[(K,V); N]>，必须 from_iter
+use serde_json::Map;
+let params: Map<String, Value> = Map::from_iter([("order_id".to_string(), json!("123"))]);
+let rocket = Rocket::new(params);
+
+// 自定义 Packer 迁移：仅形参类型替换
+// fn pack(&self, data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String>
+
+// 强类型入口（新增能力）
+let order: OrderResp = artful.artful_as(params, plugins).await?;
+```
+
+另注意：`JsonPacker` 输出键序由随机变为字典序；packer 定位收窄为「请求级配置：链早期设定一次，不承诺链中途替换」；新增错误变体 `DestinationMismatch`，对 `ArtfulError` 做 exhaustive match 的代码需补充分支。完整清单见 CHANGELOG 0.18.0 条目。
 
 ### 内置 Packer 与 Direction
 

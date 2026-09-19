@@ -56,9 +56,7 @@
 //! }
 //! ```
 
-use std::collections::HashMap;
-
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub mod direction;
 pub mod directions;
@@ -83,7 +81,7 @@ pub use direction::{Destination, Direction, DirectionKind};
 pub use error::{ArtfulError, Result};
 pub use event::{Event, EventDispatcher, EventListener};
 pub use flow_ctrl::{FlowCtrl, Next};
-pub use packer::Packer;
+pub use packer::{Packer, pack_typed, unpack_typed};
 pub use packers::{JsonPacker, QueryPacker, XmlPacker};
 pub use plugin::Plugin;
 pub use plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
@@ -98,7 +96,7 @@ pub use shortcut::Shortcut;
 ///
 /// [`AddPayloadBodyPlugin`](plugins::AddPayloadBodyPlugin) 打包请求体时
 /// 调用；响应解包侧不做此过滤。
-pub fn filter_params(payload: &HashMap<String, Value>) -> HashMap<String, Value> {
+pub fn filter_params(payload: &Map<String, Value>) -> Map<String, Value> {
     payload
         .iter()
         .filter(|(k, v)| !k.starts_with('_') && !v.is_null())

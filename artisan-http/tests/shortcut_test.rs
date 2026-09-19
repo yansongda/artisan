@@ -1,8 +1,7 @@
 use artisan_http::plugins::{AddPayloadBodyPlugin, AddRadarPlugin, ParserPlugin, StartPlugin};
 use artisan_http::{Artful, ArtfulError, Plugin, Rocket, Shortcut, flow_ctrl::Next};
 use async_trait::async_trait;
-use serde_json::{Value, json};
-use std::collections::HashMap;
+use serde_json::{Map, Value, json};
 use std::sync::{Arc, Mutex};
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -25,11 +24,11 @@ impl Plugin for MethodUrlPlugin {
 struct RecordingShortcut {
     method: reqwest::Method,
     url: String,
-    received_params: Arc<Mutex<Option<HashMap<String, Value>>>>,
+    received_params: Arc<Mutex<Option<Map<String, Value>>>>,
 }
 
 impl Shortcut for RecordingShortcut {
-    fn get_plugins(&self, params: &HashMap<String, Value>) -> Vec<Arc<dyn Plugin>> {
+    fn get_plugins(&self, params: &Map<String, Value>) -> Vec<Arc<dyn Plugin>> {
         *self.received_params.lock().unwrap() = Some(params.clone());
 
         vec![
@@ -61,7 +60,7 @@ impl Plugin for FailingPlugin {
 }
 
 impl Shortcut for FailingShortcut {
-    fn get_plugins(&self, _params: &HashMap<String, Value>) -> Vec<Arc<dyn Plugin>> {
+    fn get_plugins(&self, _params: &Map<String, Value>) -> Vec<Arc<dyn Plugin>> {
         vec![
             Arc::new(StartPlugin),
             Arc::new(MethodUrlPlugin {
@@ -87,7 +86,7 @@ async fn test_artful_shortcut_full_chain() {
         .mount(&mock_server)
         .await;
 
-    let params = HashMap::from([
+    let params = Map::from_iter([
         ("order_id".to_string(), json!("123")),
         ("amount".to_string(), json!(100)),
     ]);
@@ -111,7 +110,7 @@ async fn test_artful_shortcut_full_chain() {
 #[tokio::test]
 async fn test_shortcut_receives_params() {
     // get_plugins 收到的 params 应与传入 Artful::shortcut 的完全一致
-    let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+    let params = Map::from_iter([("order_id".to_string(), json!("123"))]);
 
     let shortcut = RecordingShortcut {
         method: reqwest::Method::POST,
@@ -140,7 +139,7 @@ async fn test_shortcut_plugin_error_propagates() {
     };
 
     let artful = Artful::new().unwrap();
-    let result = artful.shortcut(shortcut, HashMap::new()).await;
+    let result = artful.shortcut(shortcut, Map::new()).await;
 
     assert!(matches!(result.unwrap_err(), ArtfulError::Other(_)));
 }

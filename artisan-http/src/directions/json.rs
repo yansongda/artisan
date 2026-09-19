@@ -53,14 +53,14 @@ impl Direction for JsonDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use serde_json::Map;
     use std::sync::Arc;
 
     use crate::packers::XmlPacker;
 
     /// 构造携带指定响应体的 Rocket(经 http::Response 转换，无需网络)
     fn rocket_with_response(body: &'static str) -> Rocket {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         let inner = http::Response::builder()
             .status(200)
             .body(body.as_bytes().to_vec())
@@ -121,7 +121,7 @@ mod tests {
     #[tokio::test]
     async fn missing_response_when_origin_absent() {
         // destination_origin 默认为 None → MissingResponse
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         let result = JsonDirection.parse(&mut rocket).await;
 

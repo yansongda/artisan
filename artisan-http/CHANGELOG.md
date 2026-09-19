@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-09-13
+
+### BREAKING
+
+- 数据域整体从 `HashMap<String, Value>` 迁移到 `serde_json::Map<String, Value>`（未启用 `preserve_order` 特性时为 BTreeMap 后端，键按字典序排列）。涉及六类公开 API：
+  - `Packer::pack` / `Packer::unpack`：`params` 形参由 `&HashMap<String, Value>` 改为 `&Map<String, Value>`（自定义 `Packer` 实现仅替换形参类型即可）
+  - `Rocket::new` / `payload` / `get_params`：改为 `Map<String, Value>`
+  - `Artful::artful` / `shortcut`：`params` 改为 `Map<String, Value>`
+  - `Shortcut::get_plugins`：形参改为 `&Map<String, Value>`
+  - `filter_params`：改为接收 `Map<String, Value>`
+  - `Event::ArtfulStart.params`：改为 `&Map<String, Value>`
+- 删除 `From<HashMap<String, Value>> for Rocket` 实现：`Rocket` 数据域统一为 `Map`，改用 `Rocket::new(Map::new())` 或 `Rocket::new(Map::from_iter([...]))` 直接构造（无兼容层）
+- 迁移 recipe（见下方附录）
+- `JsonPacker` 输出键序行为声明：序列化输出键序由随机变为字典序（JSON 对象键序无语义，纯收益：日志/签名确定性收敛）
+- **键序保证基于 serde_json 默认 BTreeMap 后端**：下游一旦启用 `preserve_order` 特性（Cargo 特性合并全局生效），`Map` 变为 IndexMap（插入序），框架「pack 键序确定性」承诺随之失效，不额外兜底
+- 新增公开错误变体 `DestinationMismatch`：`Destination::into_json` / `Artful::artful_as` 遇 `Response`/`None` 方向时返回；下游对 `ArtfulError` 做 exhaustive match 的代码需补充该变体分支
+- packer 语义收窄声明：packer 定位从「运行时可替换的机制」收窄为「**请求级配置：请求链早期设定一次，框架不承诺链中途替换语义**」（与 PHP artful 事实形态对齐：pay 32 处 `setPacker` 均在链启动阶段设定、全库无二次覆盖）；机制保留：`rocket.packer` 仍为 `pub Arc<dyn Packer>` 可变字段
+- 新增依赖 `serde`（`version = "1.0", default-features = false, features = ["std"]`，无 derive，下游不继承 derive 特性）：typed 层公开 API 的 trait bound 需要 serde crate 直接可见（serde 已在依赖树中作为 serde_json 传递依赖，直接声明不新增第三方代码）；`dev-dependencies` 补 `serde`（`features = ["derive"]`）供测试/示例结构体 derive
+
+### Added
+
+- typed 便利层四项：
+  - `pack_typed` / `unpack_typed`：Packer 层强类型出入口——业务结构体直接序列化为请求体 / 响应体直接反序列化为业务结构体（`dyn Packer` 兼容）
+  - `Destination::into_json`：把 destination 转为 `serde_json::Value`（`Json` 方向返回对象；`Response`/`None` 方向返回 `DestinationMismatch`）
+  - `Artful::artful_as`：强类型入口——`artful()` → `into_json()` → `from_value::<T>` 一步到位
+- 错误处理说明：`pack_typed` 序列化失败复用 `JsonSerializeError`、输入非 JSON 对象复用 `InvalidParameter { param: "data" }`；`unpack_typed` 反序列化失败复用 `JsonDeserializeError`（message 注明目标类型）；`Destination::into_json` / `Artful::artful_as` 遇 `Response`/`None` 方向返回新增的 `DestinationMismatch`（destination 是链路结果而非调用方传参，`InvalidParameter` 语义不贴切）
+
+> 附录：迁移 recipe（0.17.x → 0.18.0）
+>
+> ```rust
+> // 旧（0.17.x）
+> use std::collections::HashMap;
+> let params = HashMap::from([("order_id".to_string(), json!("123"))]);
+> let rocket = Rocket::new(params);
+> 
+> // 新（0.18.0）——注意 serde_json::Map 无 From<[(K,V); N]>，必须 from_iter
+> use serde_json::Map;
+> let params: Map<String, Value> = Map::from_iter([("order_id".to_string(), json!("123"))]);
+> let rocket = Rocket::new(params);
+> 
+> // 自定义 Packer 迁移：仅形参类型替换
+> // fn pack(&self, data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String>
+> 
+> // 强类型入口（新增能力）
+> let order: OrderResp = artful.artful_as(params, plugins).await?;
+> ```
+
 ## [0.17.0] - 2026-09-01
 
 ### Added

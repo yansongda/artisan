@@ -94,6 +94,12 @@ pub enum ArtfulError {
     #[error("failed to parse response: {0}")]
     DirectionParseError(String),
 
+    #[error("destination mismatch: expected {expected}, got {actual}")]
+    DestinationMismatch {
+        expected: &'static str,
+        actual: String,
+    },
+
     #[error("missing HTTP request")]
     MissingRequest,
 
@@ -279,6 +285,14 @@ mod tests {
         assert_eq!(
             ArtfulError::DirectionParseError("bad body".to_string()).to_string(),
             "failed to parse response: bad body"
+        );
+        assert_eq!(
+            ArtfulError::DestinationMismatch {
+                expected: "Json",
+                actual: "NoRequest".to_string(),
+            }
+            .to_string(),
+            "destination mismatch: expected Json, got NoRequest"
         );
         assert_eq!(
             ArtfulError::MissingRequest.to_string(),

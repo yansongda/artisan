@@ -10,7 +10,6 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use quick_xml::name::QName;
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, HashMap};
 
 use crate::Result;
 use crate::error::ArtfulError;
@@ -21,8 +20,8 @@ use crate::packer::Packer;
 /// # pack 行为
 ///
 /// 产出 `<xml>` 包裹的单层节点：数值为纯文本，其余标量为 CDATA；
-/// 空数据输出 `<xml></xml>`；顶层键按字典序升序输出（HashMap 无序，
-/// 排序保证输出确定性，签名场景可复现）。
+/// 空数据输出 `<xml></xml>`；顶层键按字典序输出（Map 天然有序，
+/// 签名场景可复现）。
 ///
 /// # unpack 行为
 ///
@@ -41,12 +40,12 @@ use crate::packer::Packer;
 /// - 实体引用（含数字字符引用）解引用后并入文本；未定义实体与 XML 1.0
 ///   非法字符引用报错
 /// - XML 属性被丢弃；命名空间前缀保留原文（如 `ns:a`）；解析结果的键序
-///   按字母序（serde_json Map 默认 BTreeMap，JSON 语义上无影响）
+///   按字母序（Map 天然有序，JSON 语义上无影响）
 #[derive(Debug, Clone, Copy, Default)]
 pub struct XmlPacker;
 
 impl Packer for XmlPacker {
-    /// 将 HashMap 序列化为 XML 字符串
+    /// 将 Map 序列化为 XML 字符串
     ///
     /// XML 序列化器忽略 params（无附加序列化开关）。
     ///
@@ -54,22 +53,16 @@ impl Packer for XmlPacker {
     ///
     /// 返回错误当值包含嵌套数组/对象——网关报文约定为一维键值对，
     /// 嵌套结构无法表达，显式报错优于产出错误报文。
-    fn pack(
-        &self,
-        data: &HashMap<String, Value>,
-        _params: &HashMap<String, Value>,
-    ) -> Result<String> {
+    fn pack(&self, data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String> {
         // 空集合 → "<xml></xml>"（区别于 JsonPacker 空输入的 "{}"）
         if data.is_empty() {
             return Ok("<xml></xml>".to_string());
         }
 
         let mut out = String::from("<xml>");
-        // 顶层键升序排序后输出（HashMap 无序，排序保证确定性）
-        let mut keys: Vec<&String> = data.keys().collect();
-        keys.sort_unstable();
-        for key in keys {
-            out.push_str(&Self::render_entry(key, &data[key])?);
+        // Map 天然有序，直接按字典序遍历
+        for (key, value) in data {
+            out.push_str(&Self::render_entry(key, value)?);
         }
         out.push_str("</xml>");
         Ok(out)
@@ -83,7 +76,7 @@ impl Packer for XmlPacker {
     ///
     /// 返回错误当 XML 格式非法（无法定位根元素、元素未闭合、
     /// 非法实体引用等），返回 [`ArtfulError::XmlDeserializeError`]。
-    fn unpack(&self, data: &str, _params: &HashMap<String, Value>) -> Result<Value> {
+    fn unpack(&self, data: &str, _params: &Map<String, Value>) -> Result<Value> {
         // 空输入约定："" 与 "0" 视为空报文，直接返回空对象
         if data.is_empty() || data == "0" {
             return Ok(Value::Object(Map::new()));
@@ -265,7 +258,7 @@ struct XmlElement {
     /// 首个直接内容节点为文本时的空白判定（`None` = 首个内容不是文本）；
     /// 决定 `finish` 是否走“字符串拼接”分支
     first_text_blank: Option<bool>,
-    children: BTreeMap<String, Value>,
+    children: Map<String, Value>,
 }
 
 impl XmlElement {
@@ -274,7 +267,7 @@ impl XmlElement {
             name,
             text: String::new(),
             first_text_blank: None,
-            children: BTreeMap::new(),
+            children: Map::new(),
         }
     }
 
@@ -294,7 +287,7 @@ impl XmlElement {
     /// 挂载子节点；同名兄弟元素第二次出现 → 该 key 转为
     /// [`Value::Array`] 追加
     fn insert_child(&mut self, name: String, value: Value) {
-        use std::collections::btree_map::Entry;
+        use serde_json::map::Entry;
 
         match self.children.entry(name) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
@@ -429,13 +422,13 @@ mod tests {
     #[test]
     fn test_xml_packer_pack() {
         let packer = XmlPacker;
-        let data = HashMap::from([
+        let data = Map::from_iter([
             ("name".to_string(), json!("yansongda")),
             ("age".to_string(), json!(29)),
         ]);
 
-        let result = packer.pack(&data, &HashMap::new()).unwrap();
-        // 顶层键升序排序后输出（确定性）：age < name
+        let result = packer.pack(&data, &Map::new()).unwrap();
+        // 顶层键按字典序输出（Map 天然有序）：age < name
         assert_eq!(
             result,
             "<xml><age>29</age><name><![CDATA[yansongda]]></name></xml>"
@@ -445,9 +438,9 @@ mod tests {
     #[test]
     fn test_xml_packer_pack_empty() {
         let packer = XmlPacker;
-        let data = HashMap::new();
+        let data = Map::new();
 
-        let result = packer.pack(&data, &HashMap::new()).unwrap();
+        let result = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(result, "<xml></xml>");
     }
 
@@ -456,13 +449,13 @@ mod tests {
         let packer = XmlPacker;
 
         // 嵌套对象/数组：无法表达为单层报文，显式报错
-        let data = HashMap::from([("obj".to_string(), json!({"k": "v"}))]);
-        let err = packer.pack(&data, &HashMap::new()).unwrap_err();
+        let data = Map::from_iter([("obj".to_string(), json!({"k": "v"}))]);
+        let err = packer.pack(&data, &Map::new()).unwrap_err();
         assert!(matches!(err, ArtfulError::XmlSerializeError { .. }));
 
-        let data = HashMap::from([("arr".to_string(), json!(["a"]))]);
+        let data = Map::from_iter([("arr".to_string(), json!(["a"]))]);
         assert!(matches!(
-            packer.pack(&data, &HashMap::new()),
+            packer.pack(&data, &Map::new()),
             Err(ArtfulError::XmlSerializeError { .. })
         ));
     }
@@ -471,9 +464,9 @@ mod tests {
     fn test_xml_packer_pack_numeric_string() {
         // 数值字符串 "29" 判定为数值 → 纯文本分支
         let packer = XmlPacker;
-        let data = HashMap::from([("age".to_string(), json!("29"))]);
+        let data = Map::from_iter([("age".to_string(), json!("29"))]);
 
-        let result = packer.pack(&data, &HashMap::new()).unwrap();
+        let result = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(result, "<xml><age>29</age></xml>");
     }
 
@@ -487,7 +480,7 @@ mod tests {
         let result = packer
             .unpack(
                 "<xml><name><![CDATA[yansongda]]></name><age>29</age></xml>",
-                &HashMap::new(),
+                &Map::new(),
             )
             .unwrap();
         // age 锁定为 String "29"：叶子文本一律字符串，不做数字转换
@@ -501,7 +494,7 @@ mod tests {
 
         // 同名兄弟元素第二次出现 → 转 Array 追加
         let result = packer
-            .unpack("<xml><tags><t>a</t><t>b</t></tags></xml>", &HashMap::new())
+            .unpack("<xml><tags><t>a</t><t>b</t></tags></xml>", &Map::new())
             .unwrap();
         assert_eq!(result["tags"]["t"], json!(["a", "b"]));
     }
@@ -511,7 +504,7 @@ mod tests {
         let packer = XmlPacker;
 
         let result = packer
-            .unpack("<xml><deep><k>v</k></deep></xml>", &HashMap::new())
+            .unpack("<xml><deep><k>v</k></deep></xml>", &Map::new())
             .unwrap();
         assert_eq!(result["deep"]["k"], json!("v"));
     }
@@ -522,12 +515,12 @@ mod tests {
 
         // 根下无子元素 → 空 Object
         assert_eq!(
-            packer.unpack("<xml></xml>", &HashMap::new()).unwrap(),
+            packer.unpack("<xml></xml>", &Map::new()).unwrap(),
             json!({})
         );
         // 空输入约定："" 与 "0" 直接返回空对象
-        assert_eq!(packer.unpack("", &HashMap::new()).unwrap(), json!({}));
-        assert_eq!(packer.unpack("0", &HashMap::new()).unwrap(), json!({}));
+        assert_eq!(packer.unpack("", &Map::new()).unwrap(), json!({}));
+        assert_eq!(packer.unpack("0", &Map::new()).unwrap(), json!({}));
     }
 
     #[test]
@@ -536,7 +529,7 @@ mod tests {
 
         // 仅空白输入：无根元素 → Err
         assert!(matches!(
-            packer.unpack(" ", &HashMap::new()),
+            packer.unpack(" ", &Map::new()),
             Err(ArtfulError::XmlDeserializeError { .. })
         ));
     }
@@ -547,7 +540,7 @@ mod tests {
 
         // 无文本元素与自闭合元素 → 该 key 值为空 Object
         let result = packer
-            .unpack("<xml><empty1></empty1><empty2/></xml>", &HashMap::new())
+            .unpack("<xml><empty1></empty1><empty2/></xml>", &Map::new())
             .unwrap();
         assert_eq!(result["empty1"], json!({}));
         assert_eq!(result["empty2"], json!({}));
@@ -559,24 +552,24 @@ mod tests {
 
         // 首直接内容为文本且非空白 → 全部直接文本拼接、子元素丢弃
         let result = packer
-            .unpack("<xml><a>1<b>2</b>3</a></xml>", &HashMap::new())
+            .unpack("<xml><a>1<b>2</b>3</a></xml>", &Map::new())
             .unwrap();
         assert_eq!(result["a"], json!("13"));
 
         let result = packer
-            .unpack("<xml><a>text<b>sub</b></a></xml>", &HashMap::new())
+            .unpack("<xml><a>text<b>sub</b></a></xml>", &Map::new())
             .unwrap();
         assert_eq!(result["a"], json!("text"));
 
         // 首直接内容为空白文本 → 对象分支：直接文本全部丢弃
         let result = packer
-            .unpack("<xml><a> <b>x</b> </a></xml>", &HashMap::new())
+            .unpack("<xml><a> <b>x</b> </a></xml>", &Map::new())
             .unwrap();
         assert_eq!(result["a"], json!({"b": "x"}));
 
         // 首直接内容是子元素 → 对象分支（尾部文本丢弃）
         let result = packer
-            .unpack("<xml><a><b>1</b>tail</a></xml>", &HashMap::new())
+            .unpack("<xml><a><b>1</b>tail</a></xml>", &Map::new())
             .unwrap();
         assert_eq!(result["a"], json!({"b": "1"}));
     }
@@ -588,7 +581,7 @@ mod tests {
         // 根恒为对象：根直接文本丢弃、子元素保留
         // （<xml>foo<a>1</a></xml> → {"a":"1"}）
         let result = packer
-            .unpack("<xml>foo<a>1</a></xml>", &HashMap::new())
+            .unpack("<xml>foo<a>1</a></xml>", &Map::new())
             .unwrap();
         assert_eq!(result, json!({"a": "1"}));
     }
@@ -597,7 +590,7 @@ mod tests {
     fn test_xml_packer_unpack_invalid() {
         let packer = XmlPacker;
 
-        let result = packer.unpack("not-xml", &HashMap::new());
+        let result = packer.unpack("not-xml", &Map::new());
         assert!(matches!(
             result,
             Err(ArtfulError::XmlDeserializeError { .. })
@@ -613,7 +606,7 @@ mod tests {
         let result = packer
             .unpack(
                 "<xml><a>x&amp;y</a><b>1&lt;2</b><c>&quot;q&quot;</c><d>&apos;</d></xml>",
-                &HashMap::new(),
+                &Map::new(),
             )
             .unwrap();
         assert_eq!(result["a"], "x&y");
@@ -630,7 +623,7 @@ mod tests {
         let result = packer
             .unpack(
                 "<xml><a>&#20013;&#25991;</a><b>&#x4E2D;&#x6587;</b></xml>",
-                &HashMap::new(),
+                &Map::new(),
             )
             .unwrap();
         assert_eq!(result["a"], "中文");
@@ -643,7 +636,7 @@ mod tests {
 
         // 未定义实体 → XmlDeserializeError
         assert!(matches!(
-            packer.unpack("<xml><a>&foo;</a></xml>", &HashMap::new()),
+            packer.unpack("<xml><a>&foo;</a></xml>", &Map::new()),
             Err(ArtfulError::XmlDeserializeError { .. })
         ));
     }
@@ -664,7 +657,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    packer.unpack(input, &HashMap::new()),
+                    packer.unpack(input, &Map::new()),
                     Err(ArtfulError::XmlDeserializeError { .. })
                 ),
                 "应拒绝非法字符引用：{input}"

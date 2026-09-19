@@ -94,13 +94,13 @@ impl Plugin for ParserPlugin {
 mod tests {
     use super::*;
     use crate::flow_ctrl::FlowCtrl;
+    use serde_json::Map;
     use serde_json::json;
-    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     /// 构造携带指定响应体的 Rocket(经 http::Response 转换，无需网络)
     fn rocket_with_response(body: &'static str) -> Rocket {
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         let inner = http::Response::builder()
             .status(200)
             .body(body.as_bytes().to_vec())
@@ -133,7 +133,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_non_response_destination() {
         // 守卫:destination 预置为 Json(非 None/Response)→ InvalidParameter
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.destination = Some(Destination::Json(json!({"x": 1})));
 
         let result = drive(&mut rocket).await;
@@ -159,7 +159,7 @@ mod tests {
     #[tokio::test]
     async fn passes_none_with_no_request_direction() {
         // NoRequest direction:不预置 origin,透传现有 destination(无值 → Destination::None),无错误
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.config.direction = DirectionKind::NoRequest;
 
         drive(&mut rocket).await.unwrap();
@@ -180,7 +180,7 @@ mod tests {
             }
         }
 
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.config.direction = DirectionKind::Custom(Arc::new(CustomDirection));
 
         drive(&mut rocket).await.unwrap();

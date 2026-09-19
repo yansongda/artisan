@@ -138,7 +138,7 @@ impl Next<'_> {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::collections::HashMap;
+    use serde_json::Map;
     use std::sync::{Arc, Mutex};
 
     struct TestPlugin {
@@ -167,7 +167,7 @@ mod tests {
         ];
 
         let mut ctrl = FlowCtrl::new(plugins);
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         ctrl.call_next(&mut rocket).await.unwrap();
 
@@ -196,7 +196,7 @@ mod tests {
         ];
 
         let mut ctrl = FlowCtrl::new(plugins);
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         ctrl.call_next(&mut rocket).await.unwrap();
 
@@ -281,7 +281,7 @@ mod tests {
     async fn test_flow_ctrl_empty_plugins() {
         let plugins: Vec<Arc<dyn Plugin>> = vec![];
         let mut ctrl = FlowCtrl::new(plugins);
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         let result = ctrl.call_next(&mut rocket).await;
         assert!(result.is_ok());
@@ -307,7 +307,7 @@ mod tests {
         // 空插件链 + set_core：链尾核心动作执行
         let mut ctrl = FlowCtrl::new(vec![]);
         ctrl.set_core(Arc::new(MarkCore));
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         ctrl.call_next(&mut rocket).await.unwrap();
 
@@ -319,7 +319,7 @@ mod tests {
         // skip_rest 后核心动作不执行（主动中止优先于终点）
         let mut ctrl = FlowCtrl::new(vec![]);
         ctrl.set_core(Arc::new(MarkCore));
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         ctrl.skip_rest();
 
@@ -349,7 +349,7 @@ mod tests {
         ctrl.set_core(Arc::new(CountCore {
             count: count.clone(),
         }));
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         ctrl.call_next(&mut rocket).await.unwrap();
         let result = ctrl.call_next(&mut rocket).await;
@@ -384,7 +384,7 @@ mod tests {
         ];
 
         let mut ctrl = FlowCtrl::new(plugins);
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         // 先手动调用 skip_rest
         ctrl.skip_rest();

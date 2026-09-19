@@ -16,8 +16,7 @@ use artisan_http::{
     Artful, Destination, Event, EventListener, Plugin, Result, Rocket, flow_ctrl::Next,
 };
 use async_trait::async_trait;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
 /// 设置 HTTP 方法和 URL 的插件
@@ -84,7 +83,7 @@ async fn main() -> Result<()> {
         .event_listener(Arc::new(LoggingListener))
         .build()?;
 
-    let mut params = HashMap::new();
+    let mut params: Map<String, Value> = Map::new();
     params.insert("order_id".to_string(), json!("123"));
     params.insert("amount".to_string(), json!(100));
 
@@ -124,7 +123,7 @@ async fn main() -> Result<()> {
         // 刻意不挂解析插件：见上方说明
     ];
 
-    match artful.artful(HashMap::new(), plugins).await {
+    match artful.artful(Map::new(), plugins).await {
         // 未挂解析插件：请求发出但 destination 为 None
         Ok(Destination::None) => {
             println!("未挂 ParserPlugin，destination 为 None（0.17.0 起解析由 ParserPlugin 承担）")

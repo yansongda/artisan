@@ -10,8 +10,8 @@
 //!   `Bool(false)` → `"0"`；`Null` 跳过整个键值对
 //! - `Array`/`Object` 递归展开为 `k[sub]` 语法（Object 用键名、Array 用
 //!   下标 `a[0]`），空容器跳过（不产出任何键值对）；递归深度不限
-//! - 多项以 `&` 连接为 `k=v`；顶层键先按字典序升序排序后输出
-//!   （**确定性**：HashMap 无序，排序保证签名场景可复现）
+//! - 多项以 `&` 连接为 `k=v`；顶层键按字典序输出
+//!   （**确定性**：Map（BTreeMap 后端）天然有序，签名场景可复现）
 //!
 //! # unpack 解析语义
 //!
@@ -39,11 +39,9 @@
 //! 数字、非 `""` 且非 `"0"` 的字符串为 truthy；`Bool(false)`、`Null`、
 //! `0` 数字、`"0"`/`""` 字符串为 falsy。
 
-use serde_json::{Map, Value};
-use std::collections::HashMap;
-
 use crate::Result;
 use crate::packer::Packer;
+use serde_json::{Map, Value};
 
 /// Query 序列化器
 ///
@@ -53,24 +51,18 @@ use crate::packer::Packer;
 pub struct QueryPacker;
 
 impl Packer for QueryPacker {
-    /// 将 HashMap 编码为 `application/x-www-form-urlencoded` 表单字符串
+    /// 将 Map 编码为 `application/x-www-form-urlencoded` 表单字符串
     ///
     /// Query 序列化器忽略 params（pack 无附加开关）。
     ///
     /// # Errors
     ///
     /// 本实现不会产生错误，恒返回 `Ok`。
-    fn pack(
-        &self,
-        data: &HashMap<String, Value>,
-        _params: &HashMap<String, Value>,
-    ) -> Result<String> {
+    fn pack(&self, data: &Map<String, Value>, _params: &Map<String, Value>) -> Result<String> {
         let mut parts: Vec<String> = Vec::new();
-        // 顶层键升序排序后输出（HashMap 无序，排序保证确定性）
-        let mut keys: Vec<&String> = data.keys().collect();
-        keys.sort_unstable();
-        for key in keys {
-            pack_entry(key, &data[key], &mut parts);
+        // Map（BTreeMap 后端）天然有序，直接按字典序遍历
+        for (key, value) in data {
+            pack_entry(key, value, &mut parts);
         }
 
         Ok(parts.join("&"))
@@ -84,7 +76,7 @@ impl Packer for QueryPacker {
     /// # Errors
     ///
     /// 本实现不会产生错误，恒返回 `Ok`。
-    fn unpack(&self, data: &str, params: &HashMap<String, Value>) -> Result<Value> {
+    fn unpack(&self, data: &str, params: &Map<String, Value>) -> Result<Value> {
         let raw = params.get("_unpack_raw").is_some_and(is_truthy);
 
         if raw {
@@ -408,35 +400,35 @@ mod tests {
 
     #[test]
     fn test_pack_basic() {
-        // 顶层键升序排序后输出（确定性）
+        // 顶层键按字典序输出（Map 天然有序）
         let packer = QueryPacker;
-        let data = HashMap::from([
+        let data = Map::from_iter([
             ("name".to_string(), json!("yansongda")),
             ("age".to_string(), json!("29")),
         ]);
 
-        let packed = packer.pack(&data, &HashMap::new()).unwrap();
+        let packed = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(packed, "age=29&name=yansongda");
     }
 
     #[test]
     fn test_pack_empty() {
         let packer = QueryPacker;
-        let data = HashMap::new();
+        let data = Map::new();
 
-        assert_eq!(packer.pack(&data, &HashMap::new()).unwrap(), "");
+        assert_eq!(packer.pack(&data, &Map::new()).unwrap(), "");
     }
 
     #[test]
     fn test_pack_rfc1738_encoding() {
         // 空格 → `+`；`%` → `%25`
         let packer = QueryPacker;
-        let data = HashMap::from([
+        let data = Map::from_iter([
             ("s".to_string(), json!("x y")),
             ("c".to_string(), json!("a%b")),
         ]);
 
-        let packed = packer.pack(&data, &HashMap::new()).unwrap();
+        let packed = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(packed, "c=a%25b&s=x+y");
     }
 
@@ -444,13 +436,13 @@ mod tests {
     fn test_pack_bool_null() {
         // true → "1"、false → "0"、null → 整键跳过
         let packer = QueryPacker;
-        let data = HashMap::from([
+        let data = Map::from_iter([
             ("t".to_string(), json!(true)),
             ("f".to_string(), json!(false)),
             ("n".to_string(), json!(null)),
         ]);
 
-        let packed = packer.pack(&data, &HashMap::new()).unwrap();
+        let packed = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(packed, "f=0&t=1");
     }
 
@@ -458,27 +450,27 @@ mod tests {
     fn test_pack_skips_null_in_nested_containers() {
         // 嵌套容器中的 null 同样整键跳过；数组按下标枚举
         let packer = QueryPacker;
-        let data = HashMap::from([("a".to_string(), json!([null, 2]))]);
+        let data = Map::from_iter([("a".to_string(), json!([null, 2]))]);
 
-        assert_eq!(packer.pack(&data, &HashMap::new()).unwrap(), "a%5B1%5D=2");
+        assert_eq!(packer.pack(&data, &Map::new()).unwrap(), "a%5B1%5D=2");
     }
 
     #[test]
     fn test_pack_nested_object() {
         // 嵌套对象：键路径 `a[b]`（`[`/`]` 编码为 %5B/%5D）
         let packer = QueryPacker;
-        let data = HashMap::from([("a".to_string(), json!({"b": 1}))]);
+        let data = Map::from_iter([("a".to_string(), json!({"b": 1}))]);
 
-        assert_eq!(packer.pack(&data, &HashMap::new()).unwrap(), "a%5Bb%5D=1");
+        assert_eq!(packer.pack(&data, &Map::new()).unwrap(), "a%5Bb%5D=1");
     }
 
     #[test]
     fn test_pack_nested_array_uses_index() {
         // 嵌套数组：下标展开为 a[l][0]=2&a[l][1]=3
         let packer = QueryPacker;
-        let data = HashMap::from([("a".to_string(), json!({"l": [2, 3]}))]);
+        let data = Map::from_iter([("a".to_string(), json!({"l": [2, 3]}))]);
 
-        let packed = packer.pack(&data, &HashMap::new()).unwrap();
+        let packed = packer.pack(&data, &Map::new()).unwrap();
         assert_eq!(packed, "a%5Bl%5D%5B0%5D=2&a%5Bl%5D%5B1%5D=3");
     }
 
@@ -486,9 +478,9 @@ mod tests {
     fn test_pack_skips_empty_containers() {
         // 空数组/空对象不产出任何键值对
         let packer = QueryPacker;
-        let data = HashMap::from([("a".to_string(), json!({})), ("b".to_string(), json!([]))]);
+        let data = Map::from_iter([("a".to_string(), json!({})), ("b".to_string(), json!([]))]);
 
-        assert_eq!(packer.pack(&data, &HashMap::new()).unwrap(), "");
+        assert_eq!(packer.pack(&data, &Map::new()).unwrap(), "");
     }
 
     #[test]
@@ -496,9 +488,7 @@ mod tests {
         // 值保持字符串
         let packer = QueryPacker;
 
-        let result = packer
-            .unpack("name=yansongda&age=29", &HashMap::new())
-            .unwrap();
+        let result = packer.unpack("name=yansongda&age=29", &Map::new()).unwrap();
         assert_eq!(result, json!({"name": "yansongda", "age": "29"}));
     }
 
@@ -508,31 +498,31 @@ mod tests {
         // 原样保留；修饰后为空的键整段丢弃
         let packer = QueryPacker;
 
-        let result = packer.unpack("a.b=1&x y=2", &HashMap::new()).unwrap();
+        let result = packer.unpack("a.b=1&x y=2", &Map::new()).unwrap();
         assert_eq!(result, json!({"a_b": "1", "x_y": "2"}));
 
         // 嵌套 index 不 mangle：内层 `su.b x` 原样保留
-        let result = packer.unpack("k[su.b x]=1", &HashMap::new()).unwrap();
+        let result = packer.unpack("k[su.b x]=1", &Map::new()).unwrap();
         assert_eq!(result, json!({"k": {"su.b x": "1"}}));
 
         // 前导空格忽略（仅 ' '）；全空格段与空键段丢弃
         assert_eq!(
-            packer.unpack("  x=1", &HashMap::new()).unwrap(),
+            packer.unpack("  x=1", &Map::new()).unwrap(),
             json!({"x": "1"})
         );
         assert_eq!(
-            packer.unpack("a=1&   ", &HashMap::new()).unwrap(),
+            packer.unpack("a=1&   ", &Map::new()).unwrap(),
             json!({"a": "1"})
         );
-        assert_eq!(packer.unpack("=x", &HashMap::new()).unwrap(), json!({}));
+        assert_eq!(packer.unpack("=x", &Map::new()).unwrap(), json!({}));
         assert_eq!(
-            packer.unpack("a=1&=x", &HashMap::new()).unwrap(),
+            packer.unpack("a=1&=x", &Map::new()).unwrap(),
             json!({"a": "1"})
         );
 
         // 全点键修饰为 __ 保留（`..=1` → {"__": "1"}）
         assert_eq!(
-            packer.unpack("..=1", &HashMap::new()).unwrap(),
+            packer.unpack("..=1", &Map::new()).unwrap(),
             json!({"__": "1"})
         );
     }
@@ -542,7 +532,7 @@ mod tests {
         // `+` → 空格；%XX → 字节
         let packer = QueryPacker;
 
-        let result = packer.unpack("s=x+y&h=50%25", &HashMap::new()).unwrap();
+        let result = packer.unpack("s=x+y&h=50%25", &Map::new()).unwrap();
         assert_eq!(result, json!({"s": "x y", "h": "50%"}));
     }
 
@@ -550,7 +540,7 @@ mod tests {
     fn test_unpack_default_nested_bracket() {
         let packer = QueryPacker;
 
-        let result = packer.unpack("k[sub]=1", &HashMap::new()).unwrap();
+        let result = packer.unpack("k[sub]=1", &Map::new()).unwrap();
         assert_eq!(result, json!({"k": {"sub": "1"}}));
     }
 
@@ -560,7 +550,7 @@ mod tests {
         let packer = QueryPacker;
 
         let result = packer
-            .unpack("k[]=1&k[]=2&n[0]=a&n[1]=b", &HashMap::new())
+            .unpack("k[]=1&k[]=2&n[0]=a&n[1]=b", &Map::new())
             .unwrap();
         assert_eq!(result, json!({"k": ["1", "2"], "n": ["a", "b"]}));
     }
@@ -570,7 +560,7 @@ mod tests {
         // 无 `=` 段：key 为整段、value 为 ""
         let packer = QueryPacker;
 
-        let result = packer.unpack("a=1&noseq", &HashMap::new()).unwrap();
+        let result = packer.unpack("a=1&noseq", &Map::new()).unwrap();
         assert_eq!(result, json!({"a": "1", "noseq": ""}));
     }
 
@@ -578,7 +568,7 @@ mod tests {
     fn test_unpack_raw_keeps_plus() {
         // _unpack_raw=1：+ 不解码
         let packer = QueryPacker;
-        let params = HashMap::from([("_unpack_raw".to_string(), json!(true))]);
+        let params = Map::from_iter([("_unpack_raw".to_string(), json!(true))]);
 
         let result = packer.unpack("name=yan+song+da&age=29", &params).unwrap();
         assert_eq!(result, json!({"name": "yan+song+da", "age": "29"}));
@@ -588,7 +578,7 @@ mod tests {
     fn test_unpack_raw_cert_unmodified() {
         // raw 解析后证书等字段逐字符无损
         let packer = QueryPacker;
-        let params = HashMap::from([("_unpack_raw".to_string(), json!(true))]);
+        let params = Map::from_iter([("_unpack_raw".to_string(), json!(true))]);
 
         let result = packer.unpack(UNPACK_RAW_FIXTURE, &params).unwrap();
         let Value::Object(map) = &result else {
@@ -619,7 +609,7 @@ mod tests {
     fn test_unpack_raw_empty_and_no_equals() {
         // 整串为空或不含 `=` → 空 Object
         let packer = QueryPacker;
-        let params = HashMap::from([("_unpack_raw".to_string(), json!(true))]);
+        let params = Map::from_iter([("_unpack_raw".to_string(), json!(true))]);
 
         assert_eq!(packer.unpack("", &params).unwrap(), json!({}));
         assert_eq!(packer.unpack("noseq", &params).unwrap(), json!({}));
@@ -629,7 +619,7 @@ mod tests {
     fn test_unpack_raw_segment_without_equals() {
         // 无 `=` 段容错：key `""`、value 去掉第一个字符
         let packer = QueryPacker;
-        let params = HashMap::from([("_unpack_raw".to_string(), json!(true))]);
+        let params = Map::from_iter([("_unpack_raw".to_string(), json!(true))]);
 
         let result = packer.unpack("a=1&noseq", &params).unwrap();
         assert_eq!(result, json!({"a": "1", "": "oseq"}));
@@ -660,7 +650,7 @@ mod tests {
         ];
 
         for (raw_param, expected) in cases {
-            let params = HashMap::from([("_unpack_raw".to_string(), raw_param.clone())]);
+            let params = Map::from_iter([("_unpack_raw".to_string(), raw_param.clone())]);
             let result = packer.unpack("name=yan+song+da", &params).unwrap();
             let plus_kept = result["name"] == "yan+song+da";
             assert_eq!(plus_kept, expected, "参数 {raw_param} truthy 判定不符");

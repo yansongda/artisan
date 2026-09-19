@@ -32,13 +32,13 @@ impl Direction for NoHttpRequestDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Map;
     use serde_json::json;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn passes_through_existing_destination() {
         // destination 已有值：原样透传，不消费
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
         rocket.destination = Some(Destination::Json(json!({"a": 1})));
 
         let result = NoHttpRequestDirection.parse(&mut rocket).await.unwrap();
@@ -54,7 +54,7 @@ mod tests {
     #[tokio::test]
     async fn returns_none_when_destination_absent() {
         // destination 为 None：返回 Destination::None
-        let mut rocket = Rocket::new(HashMap::new());
+        let mut rocket = Rocket::new(Map::new());
 
         let result = NoHttpRequestDirection.parse(&mut rocket).await.unwrap();
 
